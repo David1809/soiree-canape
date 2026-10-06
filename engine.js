@@ -438,9 +438,9 @@
     var s = this.s;
     s.players.forEach(function (p) { p.score = 0; });
     var played = this.o.getPlayed ? this.o.getPlayed() : {};
-    var n = this.active().length || s.players.length;
+    var n = s.players.length;
     var games = s.settings.games.filter(function (g) { return !GAMES[g].min || n >= GAMES[g].min; });
-    if (!games.length) games = ['culture'];
+    if (!games.length) return; // aucun jeu jouable avec ce nombre de joueurs : on reste au salon
     s.roles = {};
     s.deck = buildDeck(s.settings.count, games, this.o.bank, played);
     s.round = 0;
@@ -475,7 +475,7 @@
   Engine.prototype.startQuestion = function () {
     var s = this.s;
     var item = s.deck[s.round - 1];
-    if (GAMES[item.g].min && this.active().length < GAMES[item.g].min) return this.nextRound();
+    if (GAMES[item.g].min && s.players.length < GAMES[item.g].min) return this.nextRound();
     var q = findQuestion(this.o.bank, item.g, item.id);
     var now = this.now();
     var time = GAMES[item.g].time * 1000;

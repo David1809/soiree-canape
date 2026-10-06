@@ -447,6 +447,19 @@
     goHome(400);
   }
 
+  // Pyramide et Croquis se jouent à 2 minimum : on prévient au lieu de lancer autre chose.
+  function startBlock(S) {
+    var n = S.players.length, st = S.settings;
+    var ok = st.games.filter(function (g) { return !GAMES[g].min || n >= GAMES[g].min; });
+    var ko = st.games.filter(function (g) { return GAMES[g].min && n < GAMES[g].min; });
+    var note = '';
+    if (ko.length) {
+      note = '<div class="note warn">' + ko.map(function (g) { return esc(GAMES[g].name); }).join(' et ') +
+        (ko.length > 1 ? ' se jouent' : ' se joue') + ' à 2 joueurs minimum' + (ok.length ? ' : ' + (ko.length > 1 ? 'ils seront sautés' : 'il sera sauté') + '.' : '. Attends un autre joueur.') + '</div>';
+    }
+    return note + '<button class="btn" id="start"' + (ok.length ? '' : ' disabled') + '>Lancer la partie</button>';
+  }
+
   function phoneLobby() {
     var S = C.S, cap = S.captain === me.pid, st = S.settings;
     var key = 'lobby|' + JSON.stringify([S.players, S.captain, st]);
@@ -479,7 +492,7 @@
       '<span class="codepill">' + esc(C.code) + '</span></div>' +
       qr + '<div class="pgrid">' + chips + '</div>' + settings +
       '<div class="grow"></div>' +
-      (cap ? '<button class="btn" id="start">Lancer la partie</button>' : '') +
+      (cap ? startBlock(S) : '') +
       '<div class="links"><button class="linkbtn" id="edit">Modifier mon profil</button><button class="linkbtn" id="quit">Quitter</button></div></div>')) return;
 
     on('seg', 'click', function (e) {
