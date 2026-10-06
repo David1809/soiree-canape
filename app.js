@@ -68,8 +68,55 @@
         lsDel('sc_sess');
         return fallback();
       }
-      start(sess, row.state);
+      var st = row.state;
+      if (st.phase === 'closed') { lsDel('sc_sess'); return fallback(); }
+      if (!sess.tv && (st.phase === 'draw' || st.phase === 'question' || st.phase === 'reveal')) {
+        return showResumeChoice(sess, st);
+      }
+      start(sess, st);
     });
+  }
+
+  function showResumeChoice(sess, st) {
+    document.body.className = 'phone';
+    C.view = 'resume';
+    var mine = null;
+    (st.players || []).forEach(function (p) { if (p.pid === me.pid) mine = p; });
+    app.innerHTML = '<div class="ph"><h1 class="title">Soirée Canapé</h1><div class="grow"></div>' +
+      '<div class="card stack" style="text-align:center"><span class="label">Partie en cours</span>' +
+      '<span class="display" style="font-size:34px;letter-spacing:.2em">' + esc(sess.code) + '</span>' +
+      '<span class="muted">Épreuve ' + st.round + ' / ' + (st.deck || []).length + (mine ? ' · tu as ' + mine.score + ' pts' : '') + '</span></div>' +
+      '<div class="grow"></div>' +
+      '<button class="btn" id="resume">Reprendre la partie</button>' +
+      '<button class="btn ghost" id="drop">' + (sess.engine ? 'Arrêter la partie pour tout le monde' : 'Quitter la partie') + '</button></div>';
+    on('resume', 'click', function () { start(sess, st); });
+    on('drop', 'click', function () {
+      if (sess.engine) return closeRemote(sess.code, st);
+      // on prévient l'hôte qu'on part, puis retour à l'accueil
+      var ch = sb.channel('sc-' + sess.code, { config: { broadcast: { self: false } } });
+      ch.subscribe(function (status) {
+        if (status === 'SUBSCRIBED') ch.send({ type: 'broadcast', event: 'p', payload: { t: 'leave', pid: me.pid } });
+      });
+      goHome(600);
+    });
+  }
+
+  // Ferme une partie qu'on hébergeait, sans la relancer.
+  function closeRemote(code, st) {
+    st.phase = 'closed';
+    st.closedBy = me.name || '';
+    sb.from('rooms').upsert({ code: code, state: st, updated_at: new Date().toISOString() }).then(function () {});
+    var ch = sb.channel('sc-' + code, { config: { broadcast: { self: false } } });
+    ch.subscribe(function (status) {
+      if (status === 'SUBSCRIBED') ch.send({ type: 'broadcast', event: 's', payload: { s: SCEngine.publicView(st), rem: 0 } });
+    });
+    goHome(800);
+  }
+
+  function goHome(delay) {
+    lsDel('sc_sess');
+    boot('Retour à l\'accueil…');
+    setTimeout(function () { location.href = location.pathname; }, delay || 0);
   }
 
   function openJoin(code) {
@@ -157,6 +204,8 @@
         else hello();
       } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
         C.ready = false;
+        if (C.ch !== ch) return;
+        netEl.textContent = 'Connexion perdue… reconnexion en cours';
         netEl.hidden = false;
       }
     });
@@ -178,9 +227,14 @@
     C.gotFresh = false;
     send({ t: 'hello' });
     clearInterval(C.helloTimer);
+    C.silent = 0;
     C.helloTimer = setInterval(function () {
-      if (C.gotFresh) clearInterval(C.helloTimer);
-      else send({ t: 'hello' });
+      if (C.gotFresh) { clearInterval(C.helloTimer); return; }
+      send({ t: 'hello' });
+      if (++C.silent >= 3) {
+        netEl.innerHTML = 'L\'hôte de la partie ne répond pas. <button type="button" data-quit class="netbtn">Quitter</button>';
+        netEl.hidden = false;
+      }
     }, 3000);
   }
 
@@ -196,6 +250,10 @@
     navigator.wakeLock.request('screen').then(function (l) { C.lock = l; }).catch(function () {});
   }
   document.addEventListener('pointerdown', keepAwake);
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest ? e.target.closest('[data-quit]') : null;
+    if (b) leave();
+  });
 
   function onState(p) {
     if (!p || !p.s) return;
@@ -203,7 +261,10 @@
     C.S = S;
     C.endAt = Date.now() + (p.rem || 0);
     C.gotFresh = true;
+    C.silent = 0;
+    if (C.ready) netEl.hidden = true;
     if (S.round !== C.myRound) { C.myRound = S.round; C.myAns = null; }
+    if (S.phase === 'closed' && !C.engine) return showClosed(S.closedBy);
     render();
   }
 
@@ -278,7 +339,8 @@
   function topbar() {
     var p = findP(me.pid);
     if (!p) return '';
-    return '<div class="topbar">' + av(p, 40) + '<span class="name">' + esc(p.name) + '</span><span class="pts">' + p.score + ' pts</span></div>';
+    return '<div class="topbar">' + av(p, 40) + '<span class="name">' + esc(p.name) + '</span><span class="pts">' + p.score + ' pts</span>' +
+      '<button type="button" class="qx" data-quit aria-label="Quitter la partie"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>';
   }
 
   function takenColors() {
@@ -340,11 +402,15 @@
   }
 
   function leave() {
-    if (C.engine && !C.S.hasTv && C.S.players.length > 1 &&
-        !window.confirm('Cette partie tourne sur ton téléphone : si tu quittes, elle s\'arrête pour tout le monde. Quitter ?')) return;
+    var S = C.S, inGame = S && S.phase !== 'lobby' && S.phase !== 'final';
+    if (C.engine && S && !S.hasTv) {
+      if (S.players.length > 1 && !window.confirm('La partie tourne sur ton téléphone : si tu quittes, elle s\'arrête pour tout le monde. Quitter ?')) return;
+      C.engine.close(me.name);
+      return goHome(500);
+    }
+    if (inGame && !window.confirm('Quitter la partie en cours ? Tes points seront perdus.')) return;
     send({ t: 'leave' });
-    lsDel('sc_sess');
-    setTimeout(function () { location.href = location.pathname; }, 300);
+    goHome(400);
   }
 
   function phoneLobby() {
@@ -648,6 +714,20 @@
     on('code', 'keydown', function (e) { if (e.key === 'Enter') go(); });
     on('mk', 'click', function () { createRoom(false); });
     on('tvb', 'click', function () { location.href = location.pathname + '?tv'; });
+  }
+
+  function showClosed(by) {
+    lsDel('sc_sess');
+    var ch = C.ch;
+    C.ch = null;
+    if (ch) { try { sb.removeChannel(ch); } catch (e) {} }
+    clearInterval(C.helloTimer);
+    document.body.className = 'phone';
+    C.view = 'closed';
+    app.innerHTML = '<div class="ph"><h1 class="title">Partie terminée</h1><div class="note">' +
+      (by ? esc(by) + ' a arrêté la partie.' : 'La partie a été arrêtée.') + '</div><div class="grow"></div>' +
+      '<button class="btn" id="home">Retour à l\'accueil</button></div>';
+    on('home', 'click', function () { location.href = location.pathname; });
   }
 
   function showError(msg) {

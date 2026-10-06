@@ -182,9 +182,18 @@
         break;
       }
       case 'leave': {
-        if (s.phase !== 'lobby') return;
+        if (!this.player(m.pid)) return;
         s.players = s.players.filter(function (x) { return x.pid !== m.pid; });
+        delete s.answers[m.pid];
         if (s.captain === m.pid) s.captain = s.players.length ? s.players[0].pid : null;
+        if (!s.players.length && s.phase !== 'lobby') {
+          // plus personne : on revient au salon
+          this.cancel();
+          s.phase = 'lobby'; s.round = 0; s.deck = []; s.cur = null; s.answers = {}; s.result = null;
+        } else if (s.phase === 'question' && Object.keys(s.answers).length >= s.players.length) {
+          this.closeQuestion();
+          return;
+        }
         this.publish();
         break;
       }
@@ -251,6 +260,14 @@
     if (!games.length) games = old.games;
     return { count: count, games: games, finale: n.finale === undefined ? old.finale : !!n.finale };
   }
+
+  // L'appareil qui fait tourner la partie la ferme pour tout le monde.
+  Engine.prototype.close = function (byName) {
+    this.cancel();
+    this.s.phase = 'closed';
+    this.s.closedBy = byName || '';
+    this.publish();
+  };
 
   Engine.prototype.startGame = function () {
     var s = this.s;
