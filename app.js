@@ -1262,7 +1262,7 @@
       '<div><p class="brand-k">Soirée jeux</p><h1 class="brand">Dé-lire</h1></div>' +
       '<div class="qrrow"><div class="qr">' + qrSvg(joinUrl()) + '</div><div style="display:flex;flex-direction:column;gap:1rem">' +
       '<div style="font-size:1.7rem;font-weight:600">Scannez avec votre téléphone</div>' +
-      '<div class="muted" style="font-size:1.25rem">ou ouvrez ' + esc(location.host) + ' et entrez le code</div><div class="tiles">' + tiles + '</div></div></div></div>' +
+      '<div class="muted" style="font-size:1.25rem">ou ouvrez ' + esc(location.host + location.pathname.replace(/index\.html$/, '').replace(/\/$/, '')) + ' et entrez le code</div><div class="tiles">' + tiles + '</div></div></div></div>' +
       '<div class="players"><div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:.4rem"><h2 class="display" style="margin:0;font-size:2.4rem">Joueurs</h2>' +
       '<span class="muted" style="font-size:1.4rem">' + S.players.length + ' / 6</span></div>' + rows +
       '<div style="margin-top:auto;display:flex;flex-direction:column;gap:1rem"><div style="display:flex;gap:.6rem;flex-wrap:wrap">' + chips + '</div>' +
