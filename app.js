@@ -197,6 +197,8 @@
     C.ch = ch;
     if (C.engine) ch.on('broadcast', { event: 'p' }, function (m) { C.engine.handle(m.payload); });
     else ch.on('broadcast', { event: 's' }, function (m) { onState(m.payload); });
+    ch.on('broadcast', { event: 'd' }, function (m) { onDraw(m.payload, false); });
+    ch.on('broadcast', { event: 'dfull' }, function (m) { onDraw(m.payload, true); });
     ch.subscribe(function (status) {
       if (status === 'SUBSCRIBED') {
         C.ready = true;
@@ -246,6 +248,10 @@
     if (C.engine) C.engine.publish(false);
     else if (C.ready) hello();
   });
+
+  setInterval(function () {
+    if (C.code && C.S && !C.tv && findP(me.pid) && C.S.phase !== 'closed') send({ t: 'ping' });
+  }, 8000);
 
   function keepAwake() {
     if (!('wakeLock' in navigator) || (C.lock && !C.lock.released)) return;
@@ -515,6 +521,8 @@
   }
 
   function phoneQuestion() {
+    if (C.S.cur.g === 'pyramide') return phonePyr();
+    if (C.S.cur.g === 'croquis') return phoneCroquis();
     var S = C.S, cur = S.cur, ans = answeredSet();
     var rej = (S.reject || {})[me.pid];
     if (cur.g === 'bluff' && rej && rej.n !== C.rejN) { C.rejN = rej.n; C.lieSent = false; }
@@ -708,6 +716,24 @@
           (r.v ? '<span class="' + (ok ? 'okmark' : 'komark') + '">' + (ok ? '✓' : '✗') + '</span>' : '') + '</div>';
       }).join('') + '</div>';
     }
+    else if (cur.g === 'pyramide') {
+      var giver = findP(cur.giver), partner = findP(cur.partner), word = wordOf(cur);
+      var mine = cur.giver === me.pid || cur.partner === me.pid;
+      verdict = '<div class="verdict ' + (cur.ok ? 'ok' : 'ko') + '"><span class="big">' + (cur.ok ? 'Trouvé !' : 'Raté') + '</span>' +
+        '<span>' + esc(giver ? giver.name : '?') + ' → ' + esc(partner ? partner.name : '?') + (cur.n ? ' · annonce ' + cur.n + ' indice' + (cur.n > 1 ? 's' : '') : '') + '</span>' +
+        (cur.ok && mine ? '<span style="font-weight:800;font-size:22px">+' + r.pts + '</span>' : '') +
+        '<span' + (cur.ok ? '' : ' class="muted"') + '>Le mot : <b>' + esc(word) + '</b></span></div>';
+    } else if (cur.g === 'croquis') {
+      var w = wordOf(cur), drawer = findP(cur.drawer);
+      if (cur.drawer === me.pid) {
+        verdict = '<div class="verdict ' + (r.pts ? 'ok' : 'ko') + '"><span class="big">' + (r.finders ? r.finders + ' joueur' + (r.finders > 1 ? 's ont' : ' a') + ' trouvé' : 'Personne n\'a trouvé') + '</span>' +
+          (r.pts ? '<span style="font-weight:800;font-size:22px">+' + r.pts + '</span>' : '') + '<span>Le mot : <b>' + esc(w) + '</b></span></div>';
+      } else {
+        verdict = '<div class="verdict ' + (r.found ? 'ok' : 'ko') + '"><span class="big">' + (r.found ? 'Trouvé en ' + ord(r.rank + 1) + ' !' : 'Pas trouvé') + '</span>' +
+          (r.pts ? '<span style="font-weight:800;font-size:22px">+' + r.pts + '</span>' : '') +
+          '<span' + (r.found ? '' : ' class="muted"') + '>Le dessin de ' + esc(drawer ? drawer.name : '?') + ' : <b>' + esc(w) + '</b></span></div>';
+      }
+    }
     var last = S.round >= S.deck.length;
     var ctrl = S.captain === me.pid ?
       '<button class="btn" id="next">' + (last ? 'Voir le classement final' : 'Épreuve suivante') + '</button>' :
@@ -728,6 +754,234 @@
     on('again', 'click', function () { send({ t: 'cmd', cmd: 'rematch' }); });
     on('lobby', 'click', function () { send({ t: 'cmd', cmd: 'lobby' }); });
     on('quit', 'click', leave);
+  }
+
+  // ================= PYRAMIDE & CROQUIS (téléphone) =================
+  function wordOf(cur) {
+    var list = QUESTIONS[cur.g] || [];
+    for (var i = 0; i < list.length; i++) if (list[i].id === cur.id) return list[i].a;
+    return '?';
+  }
+
+  function headRow(label) {
+    var S = C.S;
+    return '<div class="stack" style="gap:8px"><div class="rowx"><span>' + esc(label) + ' · ' + S.round + '/' + S.deck.length + (S.mult > 1 ? ' · ×2' : '') + '</span>' +
+      '<b style="color:var(--ink)"><span data-sec></span> s</b></div><div class="bar"><i data-bar></i></div></div>';
+  }
+
+  function wordCard(w, small) {
+    return '<div class="wordcard' + (small ? ' small' : '') + '"><span class="k">Mot secret</span><span class="w">' + esc(w) + '</span></div>';
+  }
+
+  function phonePyr() {
+    var S = C.S, cur = S.cur, giver = findP(cur.giver), partner = findP(cur.partner);
+    var role = cur.giver === me.pid ? 'giver' : cur.partner === me.pid ? 'partner' : 'spec';
+    var key = 'pyr|' + S.round + '|' + cur.step + '|' + role;
+    var gName = esc(giver ? giver.name : '?'), pName = esc(partner ? partner.name : '?');
+    var ann = cur.n ? 'Annonce : ' + cur.n + ' indice' + (cur.n > 1 ? 's' : '') + ' · ' + [0, 30, 20, 10][cur.n] + ' pts' : 'Annonce en cours…';
+    var body = '';
+    if (role === 'giver') {
+      body = '<div class="duo">Tu fais deviner à ' + (partner ? av(partner, 30) : '') + ' <b>' + pName + '</b></div>' + wordCard(wordOf(cur));
+      if (cur.step === 'announce') {
+        body += '<div class="stack" style="gap:8px"><span class="label">En combien d\'indices ?</span><div class="annonce" id="ann">' +
+          [1, 2, 3].map(function (n) { return '<button type="button" data-n="' + n + '"><b>' + n + ' indice' + (n > 1 ? 's' : '') + '</b><span>' + [0, 30, 20, 10][n] + ' pts</span></button>'; }).join('') +
+          '</div><span class="muted" style="font-size:13px;text-align:center">Un seul mot par indice, à voix haute</span></div>';
+      } else {
+        body += '<div class="note">' + ann + '</div><div class="grow"></div><div class="duo-btns"><button class="btn ghost" id="ko">Raté</button><button class="btn good" id="ok">Trouvé</button></div>';
+      }
+    } else if (role === 'partner') {
+      body = '<div class="grow"></div><div class="verdict ok" style="padding:24px 16px"><span class="big" style="font-size:30px">C\'est toi qui devines !</span>' +
+        '<span>' + gName + ' te donne des indices d\'un seul mot. Réponds à voix haute.</span></div><div class="note">' + ann + '</div><div class="grow"></div>';
+    } else {
+      body = '<div class="duo">' + (giver ? av(giver, 30) : '') + ' <b>' + gName + '</b> fait deviner à ' + (partner ? av(partner, 30) : '') + ' <b>' + pName + '</b></div>' +
+        wordCard(wordOf(cur), true) + '<div class="note">' + ann + '</div>' +
+        '<span class="muted" style="font-size:14px;text-align:center">Surveillez : un seul mot par indice, et pas de mot de la même famille. Ne montrez pas votre écran !</span>';
+    }
+    if (!setView(key, '<div class="ph">' + topbar() + headRow('Pyramide') + body + (role === 'giver' && cur.step === 'play' ? '' : '<div class="grow"></div>') + '</div>')) return;
+    on('ann', 'click', function (e) {
+      var b = e.target.closest ? e.target.closest('button') : null;
+      if (!b) return;
+      send({ t: 'announce', round: S.round, n: Number(b.getAttribute('data-n')) });
+    });
+    on('ok', 'click', function () { send({ t: 'pyr', round: S.round, ok: true }); });
+    on('ko', 'click', function () { send({ t: 'pyr', round: S.round, ok: false }); });
+  }
+
+  function phoneCroquis() {
+    var S = C.S, cur = S.cur, drawer = findP(cur.drawer), isDrawer = cur.drawer === me.pid;
+    var found = (cur.found || []).some(function (f) { return f.pid === me.pid; });
+    resetDraw(S.round);
+    var key = 'cq|' + S.round + '|' + (isDrawer ? 'd' : found ? 'f' : 'g');
+    var body;
+    if (isDrawer) {
+      body = '<div class="drawhead"><span class="muted">Dessine :</span> <b class="word">' + esc(wordOf(cur)) + '</b></div>' +
+        '<div class="board"><canvas id="cv" class="pen"></canvas></div>' +
+        '<div class="tools" id="tools">' + PEN_COLORS.map(function (c, i) { return '<button type="button" class="dot' + (C.pen.c === i ? ' on' : '') + '" data-c="' + i + '" style="background:' + c + '" aria-label="Couleur ' + (i + 1) + '"></button>'; }).join('') +
+        '<button type="button" class="tool' + (C.pen.w ? ' on' : '') + '" data-w="1">Épais</button><button type="button" class="tool" data-clear="1">Effacer</button></div>' +
+        '<div class="note" id="stat"></div>';
+    } else {
+      body = '<div class="drawhead">' + (drawer ? av(drawer, 26) : '') + ' <b>' + esc(drawer ? drawer.name : '?') + '</b> <span class="muted">dessine…</span></div>' +
+        '<div class="board"><canvas id="cv"></canvas></div>' +
+        (found ? '<div class="verdict ok" style="padding:12px"><span class="big" style="font-size:24px">Trouvé ! Bravo</span></div>' :
+          '<div class="guessrow"><input id="gs" class="input" maxlength="30" autocomplete="off" placeholder="Ta proposition"><button class="btn" id="gsend" style="width:auto">OK</button></div>') +
+        '<div class="note" id="stat"></div>';
+    }
+    var fresh = setView(key, '<div class="ph">' + headRow('Croquis') + body + '</div>');
+    // mises à jour sans effacer le dessin ni la saisie
+    var nf = (cur.found || []).length, guessers = S.players.filter(function (p) { return p.pid !== cur.drawer && !p.off; }).length;
+    var fb = (S.fb || {})[me.pid];
+    var msg = nf + '/' + guessers + ' ont trouvé';
+    if (!isDrawer && !found && fb && fb.n !== C.fbN) { C.fbN = fb.n; C.fbMsg = fb.res === 'near' ? 'Presque ! Essaie encore' : 'Non… essaie encore'; }
+    if (!isDrawer && !found && C.fbMsg) msg = C.fbMsg + ' · ' + msg;
+    $('stat').textContent = msg;
+    if (!fresh) return;
+    setupCanvas($('cv'), isDrawer);
+    if (isDrawer) {
+      on('tools', 'click', function (e) {
+        var b = e.target.closest ? e.target.closest('button') : null;
+        if (!b) return;
+        if (b.getAttribute('data-c') != null) C.pen.c = Number(b.getAttribute('data-c'));
+        if (b.getAttribute('data-w')) C.pen.w = C.pen.w ? 0 : 1;
+        if (b.getAttribute('data-clear')) { C.draw.strokes = {}; C.draw.order = []; paint(); sendFull(); }
+        var bs = $('tools').querySelectorAll('button');
+        for (var i = 0; i < bs.length; i++) {
+          var c = bs[i].getAttribute('data-c'), w = bs[i].getAttribute('data-w');
+          if (c != null) bs[i].className = 'dot' + (Number(c) === C.pen.c ? ' on' : '');
+          if (w) bs[i].className = 'tool' + (C.pen.w ? ' on' : '');
+        }
+      });
+    } else {
+      var go = function () {
+        var v = $('gs').value.replace(/\s+/g, ' ').trim();
+        if (!v) return;
+        send({ t: 'guess', round: S.round, text: v });
+        $('gs').value = '';
+        $('gs').focus();
+      };
+      on('gsend', 'click', go);
+      on('gs', 'keydown', function (e) { if (e.key === 'Enter') go(); });
+    }
+  }
+
+  // ---------- dessin partagé ----------
+  var PEN_COLORS = ['#14121F', '#E5484D', '#2F7BFF', '#22A06B'];
+  var PEN_W = [0.009, 0.024];
+  C.pen = { c: 0, w: 0 };
+  C.draw = { round: -1, strokes: {}, order: [] };
+  C.cv = null;
+
+  function resetDraw(round) {
+    if (C.draw.round === round) return;
+    C.draw = { round: round, strokes: {}, order: [] };
+    C.fbN = 0; C.fbMsg = '';
+  }
+
+  function onDraw(p, full) {
+    if (!p || !C.S || p.r !== C.S.round) return;
+    resetDraw(p.r);
+    if (C.S.cur && C.S.cur.drawer === me.pid && !C.tv) return; // c'est moi qui dessine
+    if (full) {
+      C.draw.strokes = {}; C.draw.order = [];
+      (p.s || []).forEach(function (st) { C.draw.strokes[st.id] = { c: st.c, w: st.w, p: st.p.slice() }; C.draw.order.push(st.id); });
+      paint();
+      return;
+    }
+    (p.s || []).forEach(function (seg) {
+      var st = C.draw.strokes[seg.id];
+      if (!st) { st = C.draw.strokes[seg.id] = { c: seg.c, w: seg.w, p: [] }; C.draw.order.push(seg.id); }
+      var from = st.p.length;
+      for (var i = 0; i < seg.p.length; i++) st.p.push(seg.p[i]);
+      paintStroke(st, Math.max(0, from - 2));
+    });
+  }
+
+  function setupCanvas(cv, pen) {
+    C.cv = cv;
+    if (!cv) return;
+    var size = function () {
+      var r = cv.getBoundingClientRect(), d = window.devicePixelRatio || 1;
+      cv.width = Math.round(r.width * d); cv.height = Math.round(r.height * d);
+      paint();
+    };
+    size();
+    window.addEventListener('resize', size);
+    if (pen) bindPen(cv);
+  }
+
+  function ctx2d() {
+    if (!C.cv || !document.body.contains(C.cv)) return null;
+    return C.cv.getContext('2d');
+  }
+
+  function paint() {
+    var g = ctx2d();
+    if (!g) return;
+    g.fillStyle = '#FFFFFF';
+    g.fillRect(0, 0, C.cv.width, C.cv.height);
+    C.draw.order.forEach(function (id) { paintStroke(C.draw.strokes[id], 0); });
+  }
+
+  function paintStroke(st, from) {
+    var g = ctx2d();
+    if (!g || !st || st.p.length < 2) return;
+    var W = C.cv.width, H = C.cv.height;
+    g.strokeStyle = PEN_COLORS[st.c] || PEN_COLORS[0];
+    g.lineWidth = Math.max(1.5, PEN_W[st.w ? 1 : 0] * W);
+    g.lineCap = 'round'; g.lineJoin = 'round';
+    g.beginPath();
+    var i = from - (from % 2);
+    g.moveTo(st.p[i] * W, st.p[i + 1] * H);
+    if (st.p.length === 2 || st.p.length - i <= 2) g.lineTo(st.p[i] * W + 0.1, st.p[i + 1] * H);
+    for (i += 2; i < st.p.length; i += 2) g.lineTo(st.p[i] * W, st.p[i + 1] * H);
+    g.stroke();
+  }
+
+  function sendFull() {
+    var list = C.draw.order.map(function (id) { var st = C.draw.strokes[id]; return { id: id, c: st.c, w: st.w, p: st.p }; });
+    chSend('dfull', { r: C.S.round, s: list });
+  }
+
+  function bindPen(cv) {
+    var cur = null, pending = {}, n = 0, flushT = null;
+    function pt(e) {
+      var r = cv.getBoundingClientRect();
+      return [Math.round(Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)) * 1000) / 1000,
+              Math.round(Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)) * 1000) / 1000];
+    }
+    function flush() {
+      flushT = null;
+      var segs = Object.keys(pending).map(function (id) { return pending[id]; });
+      pending = {};
+      if (segs.length) chSend('d', { r: C.S.round, s: segs });
+    }
+    cv.addEventListener('pointerdown', function (e) {
+      e.preventDefault();
+      try { cv.setPointerCapture(e.pointerId); } catch (err) {}
+      var id = me.pid.slice(0, 4) + '-' + C.S.round + '-' + (++n);
+      var p = pt(e);
+      cur = { id: id, st: { c: C.pen.c, w: C.pen.w, p: [p[0], p[1]] } };
+      C.draw.strokes[id] = cur.st; C.draw.order.push(id);
+      pending[id] = { id: id, c: cur.st.c, w: cur.st.w, p: [p[0], p[1]] };
+      paintStroke(cur.st, 0);
+      if (!flushT) flushT = setTimeout(flush, 80);
+    });
+    cv.addEventListener('pointermove', function (e) {
+      if (!cur) return;
+      var p = pt(e), st = cur.st;
+      st.p.push(p[0], p[1]);
+      var seg = pending[cur.id] || (pending[cur.id] = { id: cur.id, c: st.c, w: st.w, p: [] });
+      seg.p.push(p[0], p[1]);
+      paintStroke(st, st.p.length - 4);
+      if (!flushT) flushT = setTimeout(flush, 80);
+    });
+    function up() { if (!cur) return; cur = null; flush(); sendFull(); }
+    cv.addEventListener('pointerup', up);
+    cv.addEventListener('pointercancel', up);
+    clearInterval(C.fullT);
+    C.fullT = setInterval(function () {
+      if (!C.S || C.S.phase !== 'question' || !C.S.cur || C.S.cur.drawer !== me.pid) { clearInterval(C.fullT); return; }
+      sendFull();
+    }, 2500);
   }
 
   // ================= TÉLÉ =================
@@ -792,6 +1046,8 @@
   }
 
   function tvQuestion() {
+    if (C.S.cur.g === 'pyramide') return tvPyr();
+    if (C.S.cur.g === 'croquis') return tvCroquis();
     var S = C.S, cur = S.cur, body = '';
     if (cur.g === 'culture') {
       body = '<div class="grid2">' + cur.c.map(function (t, i) {
@@ -808,6 +1064,36 @@
     }
     setView('tq|' + S.round, '<div class="tvw">' + tvBar(true) + '<h1 class="q">' + esc(cur.q) + '</h1>' + body + '<div class="foot" id="who"></div></div>');
     $('who').innerHTML = tvWho();
+  }
+
+  function tvPyr() {
+    var S = C.S, cur = S.cur, gv = findP(cur.giver), pt = findP(cur.partner);
+    var ann = cur.n ? 'En ' + cur.n + ' indice' + (cur.n > 1 ? 's' : '') + ' · ' + [0, 30, 20, 10][cur.n] + ' pts' : esc(gv ? gv.name : '') + ' choisit son annonce…';
+    setView('tpyr|' + S.round + '|' + cur.step, '<div class="tvw">' + tvBar(true) +
+      '<div class="pyrduo big">' + (gv ? avR(gv, 6) + '<span>' + esc(gv.name) + '</span>' : '') + '<span class="arrow">→</span>' + (pt ? avR(pt, 6) + '<span>' + esc(pt.name) + '</span>' : '') + '</div>' +
+      '<div class="bigres">' + ann + '</div>' +
+      '<div class="foot muted">Le mot est secret : tout le monde sauf ' + esc(pt ? pt.name : '') + ' le voit sur son téléphone</div></div>');
+  }
+
+  function tvCroquis() {
+    var S = C.S, cur = S.cur, dr = findP(cur.drawer);
+    resetDraw(S.round);
+    var fresh = setView('tcq|' + S.round, '<div class="tvw"><div class="split"><div class="board tvboard"><canvas id="cv"></canvas></div>' +
+      '<div class="side" id="cqside"></div></div></div>');
+    var found = {};
+    (cur.found || []).forEach(function (f) { found[f.pid] = true; });
+    var feed = (S.feed || []).slice(-6).map(function (f) {
+      var p = findP(f.pid);
+      if (!p) return '';
+      return '<div class="srow" style="font-size:1.2rem">' + avR(p, 2) + '<span class="n">' + (f.ok ? '<b style="color:var(--good)">a trouvé !</b>' : esc(f.text) + (f.near ? ' <span class="muted">(presque)</span>' : '')) + '</span></div>';
+    }).join('');
+    $('cqside').innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between"><span class="chip accent">Croquis' + (S.mult > 1 ? ' ×2' : '') + '</span><div class="ring" data-ring style="width:4.6rem;height:4.6rem;font-size:1.8rem"><span data-sec></span></div></div>' +
+      '<div style="font-size:1.4rem">' + (dr ? avR(dr, 2.4) + ' <b>' + esc(dr.name) + '</b> dessine' : '') + '</div>' +
+      '<div class="muted" style="font-size:1.1rem">Tapez vos propositions sur votre téléphone</div>' +
+      '<div style="display:flex;gap:.5rem;flex-wrap:wrap">' + S.players.filter(function (p) { return p.pid !== cur.drawer; }).map(function (p) { return avR(p, 2.4, !found[p.pid]); }).join('') + '</div>' +
+      '<div style="display:flex;flex-direction:column;gap:.5rem;margin-top:auto">' + feed + '</div>';
+    tickTimers();
+    if (fresh) setupCanvas($('cv'));
   }
 
   function tvVote() {
@@ -870,7 +1156,31 @@
         return '<div class="ocard good"><span class="num">' + (pos + 1) + '</span><span class="t">' + esc(cur.items[k].t) + '</span>' + (cur.vals[k] ? '<span class="v">' + esc(cur.vals[k]) + '</span>' : '') + '</div>';
       }).join('') + '</div><div style="display:flex;flex-direction:column;gap:.6rem">' + rows + '</div>';
     }
+    else if (cur.g === 'pyramide') {
+      var gv = findP(cur.giver), pt = findP(cur.partner);
+      body = '<div class="pyrduo">' + (gv ? avR(gv, 4) + '<span>' + esc(gv.name) + '</span>' : '') + '<span class="arrow">→</span>' + (pt ? avR(pt, 4) + '<span>' + esc(pt.name) + '</span>' : '') + '</div>' +
+        '<div><div class="muted" style="font-size:1.4rem;margin-bottom:.6rem">Le mot</div><div class="truth">' + esc(wordOf(cur)) + '</div></div>' +
+        '<div class="bigres ' + (cur.ok ? 'good' : '') + '">' + (cur.ok ? 'Trouvé ! +' + ((res[cur.giver] || {}).pts || 0) + ' chacun' : 'Raté') +
+        (cur.n ? ' <span class="muted">· annonce : ' + cur.n + ' indice' + (cur.n > 1 ? 's' : '') + '</span>' : '') + '</div>';
+    } else if (cur.g === 'croquis') {
+      var dr = findP(cur.drawer);
+      var finders = (cur.found || []).map(function (f, i) {
+        var p = findP(f.pid);
+        return p ? '<div class="srow">' + avR(p, 2.4) + '<span class="n">' + esc(p.name) + '</span><span class="g">+' + ((res[f.pid] || {}).pts || 0) + '</span></div>' : '';
+      }).join('');
+      body = '<div class="cqrev"><div class="board"><canvas id="cv"></canvas></div><div style="flex:1;display:flex;flex-direction:column;gap:1rem">' +
+        '<div class="muted" style="font-size:1.3rem">Le dessin de ' + esc(dr ? dr.name : '?') + '</div><div class="truth" style="font-size:3.4rem">' + esc(wordOf(cur)) + '</div>' +
+        (finders || '<div class="muted" style="font-size:1.4rem">Personne n\'a trouvé</div>') +
+        (dr && (res[cur.drawer] || {}).pts ? '<div class="srow">' + avR(dr, 2.4) + '<span class="n">' + esc(dr.name) + ' (dessin)</span><span class="g">+' + res[cur.drawer].pts + '</span></div>' : '') + '</div></div>';
+    }
     var next = S.round >= S.deck.length ? 'le classement final' : 'l\'épreuve suivante';
+    var titleQ = cur.g === 'pyramide' ? 'Pyramide' : cur.g === 'croquis' ? 'Croquis' : cur.q;
+    if (cur.g === 'pyramide' || cur.g === 'croquis') {
+      setView('trev|' + S.round, '<div class="tvw"><div class="split"><div style="flex:1;display:flex;flex-direction:column;gap:1.6rem;min-width:0">' + tvBar(false) + body +
+        '<div class="foot muted">' + esc(capName()) + ' lance ' + next + ' depuis son téléphone</div></div>' + tvSide() + '</div></div>');
+      if (cur.g === 'croquis') setupCanvas($('cv'));
+      return;
+    }
     setView('trev|' + S.round, '<div class="tvw"><div class="split"><div style="flex:1;display:flex;flex-direction:column;gap:1.6rem;min-width:0">' + tvBar(false) +
       '<h1 class="q" style="font-size:2.4rem">' + esc(cur.q) + '</h1>' + body +
       '<div class="foot muted">' + esc(capName()) + ' lance ' + next + ' depuis son téléphone</div></div>' + tvSide() + '</div></div>');

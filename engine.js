@@ -9,8 +9,11 @@
     culture: { name: 'Culture générale', time: 20 },
     estimation: { name: 'Estimation', time: 30 },
     bluff: { name: 'Le Bluff', time: 60, voteTime: 30 },
-    ordre: { name: 'Dans l\'ordre !', time: 30 }
+    ordre: { name: 'Dans l\'ordre !', time: 30 },
+    pyramide: { name: 'Pyramide', time: 30, announceTime: 12, min: 2 },
+    croquis: { name: 'Croquis', time: 60, min: 2 }
   };
+  var OFFLINE_MS = 25000;
   var LIE_MAX = 60;
   var EST_POINTS = [30, 20, 10, 0];
   var DRAW_MS = 3500;
@@ -64,6 +67,13 @@
     if (x === y) return true;
     var L = Math.max(x.length, y.length);
     return lev(x, y) <= (L <= 4 ? 0 : L <= 7 ? 1 : L <= 15 ? 2 : 3);
+  }
+
+  // Presque juste (pour afficher « Presque ! » au Croquis).
+  function nearMiss(a, b) {
+    var x = phon(normText(a)), y = phon(normText(b));
+    if (!x || !y) return false;
+    return lev(x, y) <= Math.ceil(Math.max(x.length, y.length) / 3) || containsTruth(a, b);
   }
 
   // La réponse reprend-elle la vérité (même entourée d'autres mots) ?
@@ -123,7 +133,7 @@
       phase: 'lobby',
       players: [],
       captain: null,
-      settings: { count: 15, games: ['culture', 'estimation', 'bluff', 'ordre'], finale: true },
+      settings: { count: 15, games: ['culture', 'estimation', 'bluff', 'ordre', 'pyramide', 'croquis'], finale: true },
       deck: [],
       round: 0,
       cur: null,
@@ -142,6 +152,9 @@
     p.deck = s.deck.map(function (d) { return d.g; });
     if (p.phase === 'question' || p.phase === 'vote') {
       if (p.cur) { delete p.cur.a; delete p.cur.alt; delete p.cur.order; delete p.cur.vals; }
+    }
+    if (p.phase === 'question' && p.cur && p.cur.found) {
+      p.cur.found = p.cur.found.map(function (f) { return { pid: f.pid }; });
     }
     if (p.phase === 'question') {
       p.answered = Object.keys(s.answers);
@@ -163,8 +176,61 @@
     this.o = opts;
     this.s = opts.state || newState(opts.code, opts.hasTv);
     this.timer = null;
+    this.seen = {};
+    var self = this, now = this.now();
+    this.s.players.forEach(function (p) { self.seen[p.pid] = now; });
     this.resume();
+    if (!opts.noHeartbeat) (opts.setInterval || setInterval)(function () { self.checkActive(); }, 4000);
   }
+
+  // ---------- joueurs présents ----------
+  // Un téléphone éteint ou fermé ne bloque plus la partie : on n'attend que les joueurs actifs.
+  Engine.prototype.checkActive = function () {
+    var s = this.s, now = this.now(), self = this, changed = false;
+    s.players.forEach(function (p) {
+      var off = now - (self.seen[p.pid] || 0) > OFFLINE_MS;
+      if (!!p.off !== off) { p.off = off; changed = true; }
+    });
+    if (changed) {
+      if (!this.checkDone()) this.publish(false);
+    }
+  };
+
+  Engine.prototype.active = function () {
+    return this.s.players.filter(function (p) { return !p.off; });
+  };
+
+  // Tout le monde a-t-il joué ? Si oui, on passe à la suite sans attendre le chrono.
+  Engine.prototype.checkDone = function () {
+    var s = this.s, act = this.active(), cur = s.cur;
+    if (!act.length || !cur) return false;
+    var done = false;
+    if (s.phase === 'question') {
+      if (cur.g === 'pyramide') done = false;
+      else if (cur.g === 'croquis') {
+        var found = {};
+        cur.found.forEach(function (f) { found[f.pid] = true; });
+        var guessers = act.filter(function (p) { return p.pid !== cur.drawer; });
+        done = guessers.length > 0 && guessers.every(function (p) { return found[p.pid]; });
+      } else done = act.every(function (p) { return s.answers[p.pid]; });
+      if (done) { this.closeQuestion(); return true; }
+    } else if (s.phase === 'vote') {
+      done = act.every(function (p) { return s.votes[p.pid]; });
+      if (done) { this.closeVote(); return true; }
+    }
+    return false;
+  };
+
+  Engine.prototype.pick = function (role, exclude) {
+    var s = this.s, counts = s.roles[role] || (s.roles[role] = {});
+    var cands = this.active().filter(function (p) { return p.pid !== exclude; });
+    if (!cands.length) cands = s.players.filter(function (p) { return p.pid !== exclude; });
+    var min = Math.min.apply(null, cands.map(function (p) { return counts[p.pid] || 0; }));
+    var best = cands.filter(function (p) { return (counts[p.pid] || 0) === min; });
+    var pid = best[Math.floor(Math.random() * best.length)].pid;
+    counts[pid] = (counts[pid] || 0) + 1;
+    return pid;
+  };
 
   Engine.prototype.now = function () { return this.o.now ? this.o.now() : Date.now(); };
 
@@ -184,7 +250,7 @@
   Engine.prototype.resume = function () {
     var s = this.s, now = this.now();
     if (s.phase === 'draw') this.schedule(s.drawUntil - now, this.startQuestion);
-    else if (s.phase === 'question' && s.cur) this.schedule(s.cur.deadline - now, this.closeQuestion);
+    else if (s.phase === 'question' && s.cur) this.schedule(s.cur.deadline - now, this.onDeadline);
     else if (s.phase === 'vote' && s.cur) this.schedule(s.cur.deadline - now, this.closeVote);
   };
 
@@ -218,7 +284,23 @@
   Engine.prototype.handle = function (m) {
     if (!m || typeof m !== 'object' || typeof m.pid !== 'string') return;
     var s = this.s;
+    if (this.player(m.pid)) {
+      this.seen[m.pid] = this.now();
+      var me = this.player(m.pid);
+      if (me.off) { me.off = false; if (m.t === 'ping') this.publish(false); }
+    }
     switch (m.t) {
+      case 'ping':
+        break;
+      case 'announce':
+        this.announce(m);
+        break;
+      case 'pyr':
+        this.pyrVerdict(m);
+        break;
+      case 'guess':
+        this.guess(m);
+        break;
       case 'hello':
         this.publish(false);
         break;
@@ -232,6 +314,7 @@
         } else {
           if (s.players.length >= MAX_PLAYERS) return;
           s.players.push({ pid: m.pid, name: name, color: this.freeColor(m.color, m.pid), score: 0 });
+          this.seen[m.pid] = this.now();
         }
         if (!s.captain || !this.player(s.captain)) s.captain = m.pid;
         this.publish();
@@ -246,11 +329,11 @@
           // plus personne : on revient au salon
           this.cancel();
           s.phase = 'lobby'; s.round = 0; s.deck = []; s.cur = null; s.answers = {}; s.result = null;
-        } else if (s.phase === 'question' && Object.keys(s.answers).length >= s.players.length) {
+        } else if (s.phase === 'question' && s.cur && (s.cur.giver === m.pid || s.cur.partner === m.pid || s.cur.drawer === m.pid)) {
+          // un rôle clé est parti : on arrête l'épreuve
           this.closeQuestion();
           return;
-        } else if (s.phase === 'vote' && Object.keys(s.votes || {}).length >= s.players.length) {
-          this.closeVote();
+        } else if (this.checkDone()) {
           return;
         }
         this.publish();
@@ -274,6 +357,7 @@
     if (s.phase !== 'question' || !s.cur || m.round !== s.round) return;
     if (!this.player(m.pid) || s.answers[m.pid]) return;
     var v = m.val;
+    if (s.cur.g === 'pyramide' || s.cur.g === 'croquis') return;
     if (s.cur.g === 'culture') {
       if (typeof v !== 'number' || v !== Math.floor(v) || v < 0 || v > 3) return;
     } else if (s.cur.g === 'estimation') {
@@ -300,8 +384,7 @@
       delete s.reject[m.pid];
     }
     s.answers[m.pid] = { v: v, t: this.now() - s.cur.startedAt };
-    if (Object.keys(s.answers).length >= s.players.length) this.closeQuestion();
-    else this.publish(false);
+    if (!this.checkDone()) this.publish(false);
   };
 
   Engine.prototype.command = function (m) {
@@ -338,7 +421,7 @@
     n = n || {};
     var count = Math.round(Number(n.count));
     if (!(count >= 3 && count <= 40)) count = old.count;
-    var games = Array.isArray(n.games) ? n.games.filter(function (g) { return GAMES.hasOwnProperty(g); }) : old.games;
+    var games = Array.isArray(n.games) ? n.games.filter(function (g, i, a) { return GAMES.hasOwnProperty(g) && a.indexOf(g) === i; }) : old.games;
     if (!games.length) games = old.games;
     return { count: count, games: games, finale: n.finale === undefined ? old.finale : !!n.finale };
   }
@@ -355,7 +438,11 @@
     var s = this.s;
     s.players.forEach(function (p) { p.score = 0; });
     var played = this.o.getPlayed ? this.o.getPlayed() : {};
-    s.deck = buildDeck(s.settings.count, s.settings.games, this.o.bank, played);
+    var n = this.active().length || s.players.length;
+    var games = s.settings.games.filter(function (g) { return !GAMES[g].min || n >= GAMES[g].min; });
+    if (!games.length) games = ['culture'];
+    s.roles = {};
+    s.deck = buildDeck(s.settings.count, games, this.o.bank, played);
     s.round = 0;
     s.result = null;
     this.nextRound();
@@ -388,6 +475,7 @@
   Engine.prototype.startQuestion = function () {
     var s = this.s;
     var item = s.deck[s.round - 1];
+    if (GAMES[item.g].min && this.active().length < GAMES[item.g].min) return this.nextRound();
     var q = findQuestion(this.o.bank, item.g, item.id);
     var now = this.now();
     var time = GAMES[item.g].time * 1000;
@@ -403,14 +491,90 @@
       s.cur.order = q.items.map(function (_, i) { return idx.indexOf(i); });
       delete s.cur.a;
     }
+    s.roles = s.roles || {};
+    if (item.g === 'pyramide') {
+      s.cur.giver = this.pick('giver');
+      s.cur.partner = this.pick('partner', s.cur.giver);
+      s.cur.step = 'announce';
+      s.cur.n = null;
+      s.cur.playTime = time;
+      time = GAMES.pyramide.announceTime * 1000;
+      s.cur.deadline = now + time;
+      s.cur.time = time;
+    }
+    if (item.g === 'croquis') {
+      s.cur.drawer = this.pick('drawer');
+      s.cur.alt = q.alt || [];
+      s.cur.found = [];
+      s.feed = [];
+      s.fb = {};
+    }
     s.answers = {};
     s.reject = {};
     s.options = null;
     s.votes = {};
     s.phase = 'question';
     if (this.o.markPlayed) this.o.markPlayed(item.id);
-    this.schedule(time, this.closeQuestion);
+    this.schedule(time, this.onDeadline);
     this.publish();
+  };
+
+  Engine.prototype.onDeadline = function () {
+    var s = this.s;
+    if (s.phase === 'question' && s.cur && s.cur.g === 'pyramide' && s.cur.step === 'announce') return this.startPlay(3);
+    this.closeQuestion();
+  };
+
+  // ---------- Pyramide ----------
+  Engine.prototype.announce = function (m) {
+    var s = this.s, cur = s.cur;
+    if (s.phase !== 'question' || !cur || cur.g !== 'pyramide' || m.round !== s.round) return;
+    if (m.pid !== cur.giver || cur.step !== 'announce') return;
+    var n = Number(m.n);
+    if (n !== 1 && n !== 2 && n !== 3) return;
+    this.startPlay(n);
+  };
+
+  Engine.prototype.startPlay = function (n) {
+    var s = this.s, cur = s.cur, now = this.now();
+    cur.step = 'play';
+    cur.n = n;
+    cur.time = cur.playTime;
+    cur.deadline = now + cur.playTime;
+    this.schedule(cur.playTime, this.onDeadline);
+    this.publish();
+  };
+
+  Engine.prototype.pyrVerdict = function (m) {
+    var s = this.s, cur = s.cur;
+    if (s.phase !== 'question' || !cur || cur.g !== 'pyramide' || m.round !== s.round) return;
+    if (m.pid !== cur.giver || cur.step !== 'play') return;
+    cur.ok = !!m.ok;
+    this.closeQuestion();
+  };
+
+  // ---------- Croquis ----------
+  Engine.prototype.guess = function (m) {
+    var s = this.s, cur = s.cur;
+    if (s.phase !== 'question' || !cur || cur.g !== 'croquis' || m.round !== s.round) return;
+    if (!this.player(m.pid) || m.pid === cur.drawer) return;
+    if (cur.found.some(function (f) { return f.pid === m.pid; })) return;
+    var text = String(m.text == null ? '' : m.text).replace(/\s+/g, ' ').trim().slice(0, 30);
+    if (!normText(text)) return;
+    var words = [cur.a].concat(cur.alt || []);
+    var ok = words.some(function (w) { return similar(text, w); });
+    var prev = s.fb[m.pid] ? s.fb[m.pid].n : 0;
+    if (ok) {
+      cur.found.push({ pid: m.pid, t: this.now() - cur.startedAt });
+      s.fb[m.pid] = { n: prev + 1, res: 'ok' };
+      s.feed.push({ pid: m.pid, ok: true });
+    } else {
+      var near = words.some(function (w) { return nearMiss(text, w); });
+      s.fb[m.pid] = { n: prev + 1, res: near ? 'near' : 'no' };
+      s.feed.push({ pid: m.pid, text: text, near: near });
+    }
+    if (s.feed.length > 8) s.feed = s.feed.slice(-8);
+    if (!this.checkDone()) this.publish(false);
   };
 
   Engine.prototype.closeQuestion = function () {
@@ -439,6 +603,15 @@
         r.rank = (i > 0 && r.diff === rows[i - 1].diff) ? rows[i - 1].rank : i;
         res[r.pid] = { v: r.v, diff: r.diff, rank: r.rank, exact: r.diff === 0, pts: (EST_POINTS[r.rank] || 0) * mult };
       });
+    } else if (cur.g === 'pyramide') {
+      var pts = cur.ok ? [0, 30, 20, 10][cur.n || 3] * mult : 0;
+      if (res[cur.giver]) res[cur.giver] = { role: 'giver', ok: !!cur.ok, pts: pts };
+      if (res[cur.partner]) res[cur.partner] = { role: 'partner', ok: !!cur.ok, pts: pts };
+    } else if (cur.g === 'croquis') {
+      cur.found.forEach(function (f, i) {
+        if (res[f.pid]) res[f.pid] = { found: true, rank: i, pts: ([30, 20, 10][i] || 10) * mult };
+      });
+      if (res[cur.drawer]) res[cur.drawer] = { role: 'drawer', pts: cur.found.length * 10 * mult, finders: cur.found.length };
     } else if (cur.g === 'ordre') {
       Object.keys(answers).forEach(function (pid) {
         if (!res[pid]) return;
@@ -491,8 +664,7 @@
     (s.options || []).forEach(function (o) { if (o.id === m.opt) opt = o; });
     if (!opt || opt.by === m.pid) return;
     s.votes[m.pid] = opt.id;
-    if (Object.keys(s.votes).length >= s.players.length) this.closeVote();
-    else this.publish(false);
+    if (!this.checkDone()) this.publish(false);
   };
 
   Engine.prototype.closeVote = function () {
@@ -515,7 +687,7 @@
     this.finish(res);
   };
 
-  var api = { Engine: Engine, GAMES: GAMES, newState: newState, publicView: publicView, buildDeck: buildDeck, buildOrder: buildOrder, similar: similar, normText: normText, containsTruth: containsTruth };
+  var api = { nearMiss: nearMiss, Engine: Engine, GAMES: GAMES, newState: newState, publicView: publicView, buildDeck: buildDeck, buildOrder: buildOrder, similar: similar, normText: normText, containsTruth: containsTruth };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.SCEngine = api;
 })(this);
