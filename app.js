@@ -168,7 +168,10 @@
 
   // ---------- banque, signalements, saison ----------
   var DATA = { played: {}, reports: {}, season: null };
-  var PREFIX = { culture: 'cg', estimation: 'es', bluff: 'bl', ordre: 'or', pyramide: 'py', croquis: 'cq' };
+  var PREFIX = { culture: 'cg', estimation: 'es', bluff: 'bl', ordre: 'or', pyramide: 'py', croquis: 'cq',
+    imposteur: 'im', punchline: 'pu', rebus: 'rb', petitbac: 'pb', reflexe: 'rx', memoire: 'me', geo: 'geo', chrono: 'ch' };
+  // jeux sans vraie banque de questions (générés à la volée) : pas listés dans « Banque de questions »
+  var GENERATED = { petitbac: 1, reflexe: 1, memoire: 1, chrono: 1 };
   var MONTHS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
 
   function loadPlayed(cb) {
@@ -213,14 +216,15 @@
           var ps = g.players || [], max = Math.max.apply(null, ps.map(function (p) { return p.score; }).concat([0]));
           ps.forEach(function (p) {
             var k = String(p.name || '').toLowerCase();
-            var row = rows[k] || (rows[k] = { name: p.name, color: p.color, wins: 0, games: 0, pts: 0 });
+            var row = rows[k] || (rows[k] = { name: p.name, color: p.color, wins: 0, games: 0, pts: 0, best: 0 });
             row.games++; row.pts += p.score; row.color = p.color;
+            if (p.score > row.best) row.best = p.score;
             if (p.score === max && max > 0) row.wins++;
           });
         });
         var list = Object.keys(rows).map(function (k) { return rows[k]; })
           .sort(function (a, b) { return b.wins - a.wins || b.pts - a.pts; });
-        DATA.season = { cfg: cfg, rows: list, label: seasonLabel(cfg), stamp: Date.now() };
+        DATA.season = { cfg: cfg, rows: list, label: seasonLabel(cfg), stamp: Date.now(), games: (r.data || []).filter(function (g) { return Date.parse(g.finished_at) >= from; }).length };
         if (cb) cb();
         if (C.S && (C.tv || C.screen === 'season')) { C.view = ''; render(); }
       });
@@ -331,7 +335,9 @@
   function onState(p) {
     if (!p || !p.s) return;
     var S = p.s;
+    var prevS = C.S;
     C.S = S;
+    sfxState(prevS, S);
     C.endAt = Date.now() + (p.rem || 0);
     C.gotFresh = true;
     C.silent = 0;
@@ -341,12 +347,124 @@
     render();
   }
 
+  // ---------- sons (synthétisés par le navigateur : aucun fichier à charger) ----------
+  var SFX = { ctx: null, noise: null };
+  function audio() {
+    if (SFX.ctx) return SFX.ctx;
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    try { SFX.ctx = new AC(); } catch (e) { return null; }
+    return SFX.ctx;
+  }
+  // les téléphones n'autorisent le son qu'après un premier toucher
+  ['pointerdown', 'touchstart', 'keydown'].forEach(function (ev) {
+    document.addEventListener(ev, function () { var a = audio(); if (a && a.state === 'suspended' && a.resume) a.resume(); }, true);
+  });
+  function tone(f, at, dur, o) {
+    o = o || {};
+    var a = audio();
+    if (!a) return;
+    var t = a.currentTime + at, osc = a.createOscillator(), g = a.createGain();
+    osc.type = o.type || 'sine';
+    osc.frequency.setValueAtTime(f, t);
+    if (o.to) osc.frequency.exponentialRampToValueAtTime(o.to, t + dur);
+    var v = (o.vol || 0.16) * (C.tv ? 1 : 0.6);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(v, t + 0.015);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    osc.connect(g); g.connect(a.destination);
+    osc.start(t); osc.stop(t + dur + 0.05);
+  }
+  function hiss(at, dur, vol, from, to) {
+    var a = audio();
+    if (!a) return;
+    if (!SFX.noise) {
+      SFX.noise = a.createBuffer(1, a.sampleRate, a.sampleRate);
+      var d = SFX.noise.getChannelData(0);
+      for (var i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    }
+    var t = a.currentTime + at, src = a.createBufferSource(), f = a.createBiquadFilter(), g = a.createGain();
+    src.buffer = SFX.noise; src.loop = true;
+    f.type = 'bandpass'; f.frequency.setValueAtTime(from || 800, t);
+    if (to) f.frequency.exponentialRampToValueAtTime(to, t + dur);
+    var v = (vol || 0.12) * (C.tv ? 1 : 0.6);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(v, t + dur * 0.7);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    src.connect(f); f.connect(g); g.connect(a.destination);
+    src.start(t); src.stop(t + dur + 0.05);
+  }
+  var SOUNDS = {
+    // tirage de l'épreuve : petit arpège montant
+    draw: function () { [523, 659, 784, 1047].forEach(function (f, i) { tone(f, i * 0.08, 0.2, { type: 'triangle', vol: 0.14 }); }); },
+    // début de l'épreuve ou d'une nouvelle étape
+    start: function () { tone(660, 0, 0.1, { type: 'square', vol: 0.05 }); tone(990, 0.09, 0.18, { type: 'square', vol: 0.05 }); },
+    // les 5 dernières secondes
+    tick: function () { tone(1250, 0, 0.05, { type: 'square', vol: 0.04 }); },
+    // quelqu'un a répondu
+    blip: function () { tone(700, 0, 0.09, { type: 'triangle', vol: 0.09, to: 1100 }); },
+    // quelqu'un a trouvé (Croquis, Rébus)
+    found: function () { [1047, 1319, 1568].forEach(function (f, i) { tone(f, i * 0.06, 0.14, { type: 'triangle', vol: 0.11 }); }); },
+    good: function () { tone(784, 0, 0.14, { type: 'triangle' }); tone(1175, 0.11, 0.32, { type: 'triangle' }); },
+    bad: function () { tone(230, 0, 0.32, { type: 'sawtooth', vol: 0.07, to: 120 }); },
+    nope: function () { tone(330, 0, 0.12, { type: 'square', vol: 0.04, to: 240 }); },
+    // révélation : roulement puis accord
+    reveal: function () { hiss(0, 0.55, 0.1, 400, 2400); [523, 659, 784].forEach(function (f) { tone(f, 0.55, 0.45, { type: 'triangle', vol: 0.09 }); }); },
+    go: function () { tone(1000, 0, 0.22, { type: 'square', vol: 0.1 }); },
+    // classement final : fanfare
+    final: function () {
+      [[523, 0, 0.12], [523, 0.14, 0.12], [523, 0.28, 0.12], [698, 0.42, 0.5], [880, 0.95, 0.18], [784, 1.15, 0.18], [1047, 1.35, 0.8]].forEach(function (n) {
+        tone(n[0], n[1], n[2], { type: 'triangle', vol: 0.15 });
+      });
+      hiss(1.35, 0.9, 0.06, 3000, 6000);
+    }
+  };
+  function sfx(name) {
+    if (C.S && C.S.settings && C.S.settings.sound === false) return;
+    if (window.__sfxLog) window.__sfxLog.push(name); // pour les tests
+    try { SOUNDS[name](); } catch (e) {}
+  }
+  // Sons déclenchés par les changements d'état. L'écran principal (télé, ou le téléphone
+  // qui sert de plateau) fait l'ambiance ; chaque téléphone joue son propre résultat.
+  function sfxState(prev, S) {
+    if (!prev || !S) return;
+    var board = C.tv || (!S.hasTv && !!C.engine);
+    if (S.phase !== prev.phase || S.round !== prev.round) {
+      if (S.phase === 'draw') { if (board) sfx('draw'); }
+      else if (S.phase === 'question' || S.phase === 'vote') { if (board) sfx('start'); }
+      else if (S.phase === 'reveal') {
+        if (C.tv) sfx('reveal');
+        else { var r = (S.result || {})[me.pid]; if (r) sfx(r.pts > 0 ? 'good' : 'bad'); }
+      } else if (S.phase === 'final') {
+        if (board) sfx('final');
+        else if (ranked()[0] && ranked()[0].pid === me.pid) sfx('good');
+      }
+      return;
+    }
+    if (S.phase !== 'question' && S.phase !== 'vote') return;
+    if (S.cur && prev.cur && S.cur.step !== prev.cur.step) { if (board) sfx('start'); return; }
+    if (C.tv) {
+      var f1 = prev.cur && prev.cur.found ? prev.cur.found.length : 0, f2 = S.cur && S.cur.found ? S.cur.found.length : 0;
+      if (f2 > f1) sfx('found');
+      else if ((S.answered || []).length > (prev.answered || []).length) sfx('blip');
+    } else {
+      var fb = (S.fb || {})[me.pid], pfb = (prev.fb || {})[me.pid];
+      if (fb && (!pfb || fb.n !== pfb.n)) sfx(fb.res === 'ok' ? 'good' : 'nope');
+    }
+  }
+
   // ---------- chrono ----------
   setInterval(tickTimers, 200);
   function tickTimers() {
     if (!C.S) return;
     var left = Math.max(0, C.endAt - Date.now());
     var total = (C.S.cur && C.S.cur.time) || 1;
+    var sec = Math.ceil(left / 1000), S = C.S, g = S.cur && S.cur.g;
+    if ((C.tv || (!S.hasTv && C.engine)) && (S.phase === 'question' || S.phase === 'vote') && sec > 0 && sec <= 5 &&
+      g !== 'chrono' && g !== 'reflexe' && !(g === 'memoire' && S.cur.step === 'show') && C.lastTick !== S.round + ':' + sec) {
+      C.lastTick = S.round + ':' + sec;
+      sfx('tick');
+    }
     var i, els = document.querySelectorAll('[data-sec]');
     for (i = 0; i < els.length; i++) els[i].textContent = Math.ceil(left / 1000);
     els = document.querySelectorAll('[data-bar]');
@@ -543,14 +661,12 @@
     var settings;
     if (cap) {
       var seg = [10, 15, 25].map(function (n) { return '<button type="button" data-n="' + n + '" class="' + (st.count === n ? 'on' : '') + '">' + n + '</button>'; }).join('');
-      var games = Object.keys(GAMES).map(function (g) {
-        var onG = st.games.indexOf(g) >= 0;
-        return '<button type="button" class="tog' + (onG ? ' on' : '') + '" data-g="' + g + '" aria-pressed="' + onG + '">' + esc(GAMES[g].name) + '</button>';
-      }).join('');
+      var nG = Object.keys(GAMES).length;
       settings = '<div class="card stack" style="gap:12px">' +
         '<div class="setrow"><span class="label">Épreuves</span><div class="seg grow" id="seg">' + seg + '</div></div>' +
-        '<div class="toggles" id="games">' + games +
-        '<button type="button" class="tog' + (st.finale ? ' on' : '') + '" data-f="1" aria-pressed="' + st.finale + '">Finale ×2</button></div></div>';
+        '<div class="gsum"><span>' + (st.games.length === nG ? 'Les ' + nG + ' jeux' : st.games.length + ' jeu' + (st.games.length > 1 ? 'x' : '') + ' sur ' + nG) + '</span>' +
+        '<button type="button" class="tog" id="pickg">Choisir les jeux</button></div>' +
+        '<div class="toggles" id="games"><button type="button" class="tog' + (st.finale ? ' on' : '') + '" data-f="1" aria-pressed="' + st.finale + '">Finale ×2</button></div></div>';
     } else {
       settings = '<div class="note">C\'est ' + esc(capName()) + ' qui lance la partie</div>';
     }
@@ -563,6 +679,7 @@
       '<div class="pills">' + (cap ? '<button type="button" id="cfg">Réglages</button>' : '') + '<button type="button" id="season">Saison</button>' +
       '<button type="button" id="edit">Profil</button><button type="button" id="quit">Quitter</button></div></div>')) return;
     on('cfg', 'click', function () { C.screen = 'settings'; C.view = ''; render(); });
+    on('pickg', 'click', function () { C.screen = 'games'; C.view = ''; render(); });
     on('season', 'click', function () { C.screen = 'season'; C.view = ''; loadSeason(); render(); });
 
     on('seg', 'click', function (e) {
@@ -594,6 +711,7 @@
 
   function phoneScreen() {
     if (C.screen === 'settings' && C.S.captain === me.pid) return phoneSettings();
+    if (C.screen === 'games' && C.S.captain === me.pid) return phoneGames();
     if (C.screen === 'questions' && C.S.captain === me.pid) return phoneQuestions();
     if (C.screen === 'season') return phoneSeason();
     C.screen = null;
@@ -608,10 +726,7 @@
   function backToLobby() { C.screen = null; C.view = ''; render(); }
 
   function phoneSettings() {
-    var st = C.S.settings, freq = st.freq || {};
-    var rows = st.games.map(function (g) {
-      return '<div class="frow"><span>' + esc(GAMES[g].name) + '</span>' + seg('f-' + g, [[0, 'Peu'], [1, 'Normal'], [2, 'Beaucoup']], freq[g] != null ? freq[g] : 1) + '</div>';
-    }).join('');
+    var st = C.S.settings;
     if (!setView('settings|' + JSON.stringify(st), '<div class="ph">' + screenHead('Réglages de la partie') +
       '<div class="setgrid">' +
       '<span class="label">Mode</span>' + seg('s-mode', [['zapping', 'Zapping'], ['manches', 'Par manches']], st.mode || 'zapping') +
@@ -620,8 +735,9 @@
       '<span class="label">Difficulté</span>' + seg('s-diff', [['facile', 'Facile'], ['mixte', 'Mixte'], ['difficile', 'Difficile']], st.diff || 'mixte') +
       '</div>' +
       '<div class="toggles"><button type="button" class="tog' + (st.finale ? ' on' : '') + '" id="s-fin">Finale ×2</button>' +
-      '<button type="button" class="tog' + (st.teams ? ' on' : '') + '" id="s-teams">2 équipes</button></div>' +
-      '<span class="label">Fréquence des jeux</span><div class="stack" style="gap:6px">' + rows + '</div>' +
+      '<button type="button" class="tog' + (st.teams ? ' on' : '') + '" id="s-teams">2 équipes</button>' +
+      '<button type="button" class="tog' + (st.sound !== false ? ' on' : '') + '" id="s-sound">Sons</button></div>' +
+      '<button class="btn ghost small" id="topick">Choisir les jeux et leur fréquence</button>' +
       '<div class="grow"></div><button class="btn ghost small" id="toq">Banque de questions</button><button class="btn" id="done">Valider</button></div>')) return;
     function upd(patch) {
       var n = JSON.parse(JSON.stringify(st));
@@ -635,23 +751,63 @@
     bindSeg('s-count', function (v) { upd({ count: Number(v) }); });
     bindSeg('s-pace', function (v) { upd({ pace: v }); });
     bindSeg('s-diff', function (v) { upd({ diff: v }); });
-    st.games.forEach(function (g) {
-      bindSeg('f-' + g, function (v) { var f = JSON.parse(JSON.stringify(freq)); f[g] = Number(v); upd({ freq: f }); });
-    });
+    on('topick', 'click', function () { C.screen = 'games'; C.view = ''; render(); });
     on('s-fin', 'click', function () { upd({ finale: !st.finale }); });
     on('s-teams', 'click', function () { upd({ teams: !st.teams }); });
+    on('s-sound', 'click', function () { upd({ sound: st.sound === false }); });
     on('toq', 'click', function () { C.screen = 'questions'; C.view = ''; loadPlayed(function () { loadReports(render); }); render(); });
     on('done', 'click', backToLobby);
     on('back', 'click', backToLobby);
   }
 
+  // Choix des jeux : toucher une tuile fait défiler Normal → Beaucoup → Peu → Désactivé
+  var FREQ_LABEL = ['Peu', 'Normal', 'Beaucoup'];
+  function phoneGames() {
+    var st = C.S.settings, freq = st.freq || {}, n = C.S.players.length;
+    var tiles = Object.keys(GAMES).map(function (g) {
+      var onG = st.games.indexOf(g) >= 0, f = freq[g] != null ? freq[g] : 1, min = GAMES[g].min;
+      var lab = onG ? FREQ_LABEL[f] : 'Désactivé';
+      if (min && n < min) lab += ' · dès ' + min;
+      return '<button type="button" class="gtile ' + (onG ? 'f' + f : 'off') + '" data-g="' + g + '"><b>' + esc(GAMES[g].name) + '</b><span>' + lab + '</span></button>';
+    }).join('');
+    if (!setView('games|' + JSON.stringify([st.games, st.freq, n]), '<div class="ph">' + screenHead('Les jeux') +
+      '<div class="muted" style="font-size:13px;margin-top:-6px">Touche un jeu : Normal → Beaucoup → Peu → Désactivé. Avec ' + st.count + ' épreuves, tous les jeux ne sortiront pas à chaque partie.</div>' +
+      '<div class="gtiles" id="gtiles">' + tiles + '</div><div class="grow"></div>' +
+      '<div class="duo-btns"><button class="btn ghost" id="gall">Tout activer</button><button class="btn" id="done">Valider</button></div></div>')) return;
+    function upd(games, f) {
+      var nx = JSON.parse(JSON.stringify(st));
+      nx.games = games; nx.freq = f;
+      send({ t: 'cmd', cmd: 'settings', settings: nx });
+    }
+    on('gtiles', 'click', function (e) {
+      var b = e.target.closest ? e.target.closest('button') : null;
+      if (!b) return;
+      var g = b.getAttribute('data-g'), games = st.games.slice(), f = JSON.parse(JSON.stringify(freq)), i = games.indexOf(g);
+      var cur = f[g] != null ? f[g] : 1;
+      if (i < 0) { games.push(g); f[g] = 1; }
+      else if (cur === 1) f[g] = 2;
+      else if (cur === 2) f[g] = 0;
+      else { if (games.length === 1) return; games.splice(i, 1); f[g] = 1; }
+      upd(games, f);
+    });
+    on('gall', 'click', function () {
+      var f = {};
+      Object.keys(GAMES).forEach(function (g) { f[g] = 1; });
+      upd(Object.keys(GAMES), f);
+    });
+    on('done', 'click', backToLobby);
+    on('back', 'click', backToLobby);
+  }
+
   function qLabel(g, q) {
-    if (g === 'pyramide' || g === 'croquis') return q.a;
+    if (g === 'pyramide' || g === 'croquis' || g === 'geo') return q.a;
+    if (g === 'imposteur') return q.a.join(' / ');
+    if (g === 'rebus') return q.e + ' ' + q.a;
     return q.q;
   }
 
   function phoneQuestions() {
-    var rows = Object.keys(GAMES).map(function (g) {
+    var rows = Object.keys(GAMES).filter(function (g) { return !GENERATED[g]; }).map(function (g) {
       var all = (QUESTIONS[g] || []).filter(function (q) { return !DATA.reports[q.id]; });
       var done = all.filter(function (q) { return DATA.played[q.id]; }).length;
       var pct = all.length ? Math.round(done / all.length * 100) : 0;
@@ -686,14 +842,21 @@
     on('back', 'click', function () { C.screen = 'settings'; C.view = ''; render(); });
   }
 
-  function phoneSeason() {
-    var se = DATA.season, cap = C.S.captain === me.pid;
-    var list = !se ? '<div class="muted">Chargement…</div>' : (se.rows.length ? se.rows.map(function (r, i) {
+  function seasonList(se) {
+    if (!se) return '<div class="muted">Chargement…</div>';
+    if (!se.rows.length) return '<div class="note">Aucune partie terminée pour l\'instant. La première victoire est à prendre !</div>';
+    return '<div class="muted" style="font-size:13px">' + se.games + ' partie' + (se.games > 1 ? 's' : '') + ' jouée' + (se.games > 1 ? 's' : '') + ' cette saison</div>' + se.rows.map(function (r, i) {
       return '<div class="prow"><span class="muted" style="width:22px;font-weight:700">' + (i + 1) + '</span>' +
         '<span class="av" style="width:34px;height:34px;font-size:15px;background:' + COLORS[r.color || 0] + '">' + esc(String(r.name).charAt(0).toUpperCase()) + '</span>' +
-        '<span class="n">' + esc(r.name) + '<span class="tag" style="display:block;font-size:12px;color:var(--muted);font-weight:500">' + r.games + ' partie' + (r.games > 1 ? 's' : '') + ' · ' + r.pts + ' pts</span></span>' +
+        '<span class="n">' + esc(r.name) + '<span class="tag" style="display:block;font-size:12px;color:var(--muted);font-weight:600">' + r.games + ' partie' + (r.games > 1 ? 's' : '') +
+        ' · moy. ' + Math.round(r.pts / r.games) + ' pts · record ' + r.best + '</span></span>' +
         '<span class="r">' + r.wins + ' <small style="font-size:12px;color:var(--muted)">vict.</small></span></div>';
-    }).join('') : '<div class="note">Aucune partie terminée pour l\'instant. La première victoire est à prendre !</div>');
+    }).join('');
+  }
+
+  function phoneSeason() {
+    var se = DATA.season, cap = C.S.captain === me.pid;
+    var list = seasonList(se);
     var ctrl = cap && se ? '<div class="stack" style="gap:8px"><span class="label">Durée d\'une saison</span>' + seg('s-dur', [['1m', '1 mois'], ['3m', '3 mois'], ['all', 'Sans fin']], se.cfg.dur || '1m') +
       '<button class="linkbtn small" id="sreset">Remettre la saison à zéro</button></div>' : '';
     if (!setView('season|' + (se ? se.stamp : ''), '<div class="ph">' + screenHead(se ? se.label : 'Saison') +
@@ -732,10 +895,19 @@
   function phoneQuestion() {
     if (C.S.cur.g === 'pyramide') return phonePyr();
     if (C.S.cur.g === 'croquis') return phoneCroquis();
+    var G = C.S.cur.g;
+    if (G === 'imposteur') return phoneImp();
+    if (G === 'rebus') return phoneRebus();
+    if (G === 'petitbac') return phoneBac();
+    if (G === 'reflexe') return phoneReflexe();
+    if (G === 'memoire') return phoneMemo();
+    if (G === 'geo') return phoneGeo();
+    if (G === 'chrono') return phoneChrono();
     var S = C.S, cur = S.cur, ans = answeredSet();
     var rej = (S.reject || {})[me.pid];
-    if (cur.g === 'bluff' && rej && rej.n !== C.rejN) { C.rejN = rej.n; C.lieSent = false; }
-    var done = cur.g === 'bluff' ? (C.lieSent || ans[me.pid]) : (C.myAns != null || ans[me.pid]);
+    var writes = cur.g === 'bluff' || cur.g === 'punchline';
+    if (writes && rej && rej.n !== C.rejN) { C.rejN = rej.n; C.lieSent = false; }
+    var done = writes ? (C.lieSent || ans[me.pid]) : (C.myAns != null || ans[me.pid]);
     var key = 'q|' + S.round + '|' + (done ? 1 : 0) + '|' + C.rejN;
     var body = '';
     if (cur.g === 'culture') {
@@ -753,14 +925,15 @@
         body = '<div class="card" style="text-align:center"><div class="label">Ta réponse</div><div class="display" style="font-size:34px;margin-top:6px">' +
           (C.myAns != null ? esc(fmt(C.myAns)) + (cur.u ? ' <span style="font-size:20px">' + esc(cur.u) + '</span>' : '') : 'envoyée') + '</div></div>';
       }
-    } else if (cur.g === 'bluff') {
+    } else if (writes) {
+      var pl = cur.g === 'punchline';
       if (!done) {
-        body = '<div class="stack"><input id="lie" class="input" maxlength="60" autocomplete="off" placeholder="Ta fausse réponse" value="' + esc(C.myAns || '') + '">' +
+        body = '<div class="stack"><input id="lie" class="input" maxlength="60" autocomplete="off" placeholder="' + (pl ? 'Ta réponse la plus drôle' : 'Ta fausse réponse') + '" value="' + esc(C.myAns || '') + '">' +
           (rej ? '<div class="note warn">' + (rej.why === 'truth' ? 'Bien vu, c\'est la vraie réponse ! Invente plutôt un mensonge.' : 'Quelqu\'un a déjà écrit ça. Trouve autre chose.') + '</div>' :
-            '<div class="muted" style="font-size:14px;text-align:center">Invente une fausse réponse crédible pour piéger les autres</div>') +
-          '<button class="btn" id="sendlie">Envoyer mon mensonge</button></div>';
+            '<div class="muted" style="font-size:14px;text-align:center">' + (pl ? 'Fais rire les autres : ils voteront pour leur préférée' : 'Invente une fausse réponse crédible pour piéger les autres') + '</div>') +
+          '<button class="btn" id="sendlie">' + (pl ? 'Envoyer ma punchline' : 'Envoyer mon mensonge') + '</button></div>';
       } else {
-        body = '<div class="card" style="text-align:center"><div class="label">Ton mensonge</div><div style="font-size:22px;font-weight:700;margin-top:6px">' + esc(C.myAns || 'envoyé') + '</div></div>';
+        body = '<div class="card" style="text-align:center"><div class="label">' + (pl ? 'Ta punchline' : 'Ton mensonge') + '</div><div style="font-size:22px;font-weight:700;margin-top:6px">' + esc(C.myAns || 'envoyé') + '</div></div>';
       }
     } else if (cur.g === 'ordre') {
       if (!C.ordre) C.ordre = cur.items.map(function (_, i) { return i; });
@@ -859,14 +1032,15 @@
     var voted = C.myVote != null || ans[me.pid];
     var mine = C.myAns ? String(C.myAns) : null;
     var key = 'v|' + S.round + '|' + (voted ? 1 : 0);
+    var pl = S.cur.g === 'punchline';
     var opts = (S.options || []).map(function (o, i) {
       var own = mine && o.text === mine;
       var cls = 'choice' + (voted ? (C.myVote === o.id ? ' sel' : ' dim') : '') + (own ? ' own' : '');
       return '<button type="button" class="' + cls + '" data-o="' + o.id + '"' + (voted || own ? ' disabled' : '') + '><span class="letter">' + LETTERS2[i] + '</span><span class="grow">' + esc(o.text) + '</span>' +
-        (own ? '<span class="tag">ton mensonge</span>' : '') + '</button>';
+        (own ? '<span class="tag">' + (pl ? 'la tienne' : 'ton mensonge') + '</span>' : '') + '</button>';
     }).join('');
     var fresh = setView(key, '<div class="ph">' + phoneHead('vote') +
-      '<div class="muted" style="font-size:14px;margin-top:-6px">Laquelle est la vraie réponse ?</div><div class="stack" id="vopts">' + opts + '</div>' +
+      '<div class="muted" style="font-size:14px;margin-top:-6px">' + (pl ? 'Vote pour ta préférée (pas la tienne !)' : 'Laquelle est la vraie réponse ?') + '</div><div class="stack" id="vopts">' + opts + '</div>' +
       '<div class="grow"></div><div class="note" id="stat"></div></div>');
     var n = (S.answered || []).length;
     $('stat').textContent = voted ? 'Vote envoyé · ' + n + '/' + S.players.length + ' ont voté' : 'Vote avant la fin du chrono';
@@ -957,6 +1131,8 @@
           '<span' + (r.found ? '' : ' class="muted"') + '>Le dessin de ' + esc(drawer ? drawer.name : '?') + ' : <b>' + esc(w) + '</b></span></div>';
       }
     }
+    var nv = newVerdict(cur, r);
+    if (nv) { verdict = nv[0]; extra = nv[1] || ''; }
     var last = S.round >= S.deck.length;
     var ctrl = S.captain === me.pid ?
       '<button class="btn" id="next">' + (last ? 'Voir le classement final' : 'Épreuve suivante') + '</button>' :
@@ -1100,6 +1276,337 @@
       on('gs', 'keydown', function (e) { if (e.key === 'Enter') go(); });
     }
   }
+
+  // Résultat personnel des nouveaux jeux : [verdict, complément]
+  function plus(pts) { return pts ? '<span style="font-weight:800;font-size:22px">+' + pts + '</span>' : ''; }
+  function newVerdict(cur, r) {
+    var S = C.S, res = S.result || {};
+    if (cur.g === 'imposteur') {
+      var imp = findP(cur.imp), pair = qOf(cur).a || ['?', '?'];
+      var head = r.role === 'imp' ? (cur.caught ? 'Démasqué !' : 'Pas vu, pas pris !') : (cur.caught ? 'Imposteur démasqué !' : 'L\'imposteur s\'en sort');
+      return ['<div class="verdict ' + (r.pts ? 'ok' : 'ko') + '"><span class="big" style="font-size:26px">' + head + '</span>' +
+        '<span>' + (r.role === 'imp' ? 'C\'était toi, l\'imposteur' : 'L\'imposteur : <b>' + esc(imp ? imp.name : '?') + '</b>') + '</span>' + plus(r.pts) +
+        '<span>Les autres : <b>' + esc(pair[cur.ci]) + '</b> · imposteur : <b>' + esc(pair[1 - cur.ci]) + '</b></span></div>'];
+    }
+    if (cur.g === 'punchline') {
+      var best = S.players.filter(function (p) { return res[p.pid] && res[p.pid].top; }).map(function (p) { return p.name; });
+      return ['<div class="verdict ' + (r.pts ? 'ok' : 'ko') + '"><span class="big" style="font-size:26px">' + (r.line ? r.votes + ' vote' + (r.votes > 1 ? 's' : '') + ' pour toi' : 'Pas de punchline') + '</span>' + plus(r.pts) +
+        (r.line ? '<span>« ' + esc(r.line) + ' »</span>' : '') + (best.length ? '<span class="muted">La plus drôle : ' + esc(best.join(', ')) + '</span>' : '') + '</div>'];
+    }
+    if (cur.g === 'rebus') {
+      return ['<div class="verdict ' + (r.found ? 'ok' : 'ko') + '"><span class="emo" style="font-size:34px">' + esc(cur.e || '') + '</span><span class="big" style="font-size:26px">' + esc(cur.a) + '</span>' +
+        '<span>' + (r.found ? 'Trouvé en ' + ord(r.rank + 1) : 'Pas trouvé') + '</span>' + plus(r.pts) + '</div>'];
+    }
+    if (cur.g === 'petitbac') {
+      var marks = r.marks || [];
+      var rows = cur.cats.map(function (c, i) {
+        var m = marks[i] || { st: 'empty' };
+        var lab = { unique: 'unique', shared: 'en double', rej: 'refusé', bad: 'mauvaise lettre', empty: '—' }[m.st];
+        return '<div class="prow"><span class="n" style="font-size:14px"><span class="muted" style="font-weight:600">' + esc(c) + '</span><br>' + esc(m.w || '—') + '</span>' +
+          '<span class="tag bac-' + m.st + '">' + lab + '</span><span class="r">' + (m.pts ? '+' + m.pts : '') + '</span></div>';
+      }).join('');
+      return ['<div class="verdict ' + (r.pts ? 'ok' : 'ko') + '"><span class="big" style="font-size:26px">Lettre ' + esc(cur.l) + '</span>' + (r.pts ? plus(r.pts) : '<span>Aucun point</span>') + '</div>',
+        '<div class="stack" style="gap:6px">' + rows + '</div>'];
+    }
+    if (cur.g === 'reflexe') {
+      return ['<div class="verdict ' + (r.pts ? 'ok' : 'ko') + '"><span class="big">' + (r.v == null ? 'Pas tapé' : r.early ? 'Faux départ' : r.v + ' ms') + '</span>' +
+        (r.rank >= 0 && r.v != null && !r.early ? '<span>' + ord(r.rank + 1) + ' plus rapide</span>' : '') + plus(r.pts) + '</div>'];
+    }
+    if (cur.g === 'memoire') {
+      return ['<div class="verdict ' + (r.ok ? 'ok' : 'ko') + '"><span class="big">' + (r.v == null ? 'Pas de réponse' : r.ok ? 'Bonne case !' : 'Raté') + '</span>' + plus(r.pts) + '</div>',
+        '<div class="memo small">' + (cur.grid || []).map(function (e, i) { return '<span class="' + (i === cur.ans ? 'good' : i === r.v ? 'bad' : '') + '">' + e + '</span>'; }).join('') + '</div>'];
+    }
+    if (cur.g === 'geo') {
+      var me2 = findP(me.pid), mk = [];
+      if (r.v) mk.push({ x: r.v[0], y: r.v[1], c: COLORS[me2 ? me2.color : 0] });
+      return ['<div class="verdict ' + (r.pts ? 'ok' : 'ko') + '"><span class="big" style="font-size:26px">' + esc(cur.q) + '</span>' +
+        '<span>' + (r.v == null ? 'Pas de réponse' : r.inside ? 'En plein dedans !' : 'À ' + fmt(r.km) + ' km') + '</span>' + plus(r.pts) + '</div>',
+        '<div class="mapbox">' + mapSvg('rmap', { hi: cur.k, marks: mk }) + '</div>'];
+    }
+    if (cur.g === 'chrono') {
+      return ['<div class="verdict ' + (r.pts ? 'ok' : 'ko') + '"><span class="muted">Objectif : ' + cur.n + ' s</span><span class="big">' + (r.v == null ? 'Pas appuyé' : secs(r.v)) + '</span>' +
+        (r.v != null ? '<span>' + (r.diff < 50 ? 'Pile-poil !' : 'écart ' + secs(r.diff)) + '</span>' : '') + plus(r.pts) + '</div>'];
+    }
+    return null;
+  }
+
+  // ================= NOUVEAUX JEUX (téléphone) =================
+  function qOf(cur) {
+    var list = QUESTIONS[cur.g] || [];
+    for (var i = 0; i < list.length; i++) if (list[i].id === cur.id) return list[i];
+    return {};
+  }
+  function myImpWord(cur) {
+    var pair = qOf(cur).a || ['?', '?'];
+    return cur.imp === me.pid ? pair[1 - cur.ci] : pair[cur.ci];
+  }
+  function statLine(done, n) {
+    return done ? 'Envoyé · ' + n + '/' + C.S.players.length + ' ont répondu' : '';
+  }
+
+  // ---------- L'Imposteur ----------
+  function phoneImp() {
+    var S = C.S, cur = S.cur, ans = answeredSet();
+    var others = S.players.filter(function (p) { return p.pid !== me.pid; });
+    var order = (cur.talk || []).map(function (pid, i) { var p = findP(pid); return p ? '<span class="ordp">' + (i + 1) + '. ' + esc(p.name) + '</span>' : ''; }).join('');
+    var key = 'imp|' + S.round + '|' + cur.step + '|' + (ans[me.pid] ? 1 : 0) + '|' + (C.myVote || '');
+    var body;
+    if (cur.step === 'talk') {
+      body = wordCard(myImpWord(cur)) +
+        '<div class="note small">Un joueur a un mot différent… et ne le sait peut-être pas !</div>' +
+        '<div class="stack" style="gap:6px"><span class="label">Chacun dit un mot, dans l\'ordre</span><div class="ordrow">' + order + '</div></div>' +
+        '<div class="grow"></div>' +
+        (ans[me.pid] ? '<div class="note" id="stat"></div>' : '<button class="btn" id="rdy">On passe au vote</button><div class="note" id="stat"></div>');
+    } else {
+      var voted = C.myVote || ans[me.pid];
+      body = '<div class="wordcard small"><span class="k">Ton mot</span><span class="w">' + esc(myImpWord(cur)) + '</span></div>' +
+        '<span class="label">Qui est l\'imposteur ?</span><div class="stack" id="ivote">' + others.map(function (p) {
+          var cls = 'choice' + (voted ? (C.myVote === p.pid ? ' sel' : ' dim') : '');
+          return '<button type="button" class="' + cls + '" data-p="' + p.pid + '"' + (voted ? ' disabled' : '') + '>' + av(p, 34) + '<span class="grow">' + esc(p.name) + '</span></button>';
+        }).join('') + '</div><div class="grow"></div><div class="note" id="stat"></div>';
+    }
+    var fresh = setView(key, '<div class="ph">' + topbar() + headRow('L\'Imposteur' + (cur.step === 'vote' ? ' · vote' : '')) + body + '</div>');
+    var n = (S.answered || []).length;
+    $('stat').textContent = cur.step === 'talk' ? n + '/' + S.players.length + ' prêts à voter' : (ans[me.pid] || C.myVote ? 'Vote envoyé · ' : '') + n + '/' + S.players.length + ' ont voté';
+    fit();
+    if (!fresh) return;
+    on('rdy', 'click', function () { send({ t: 'ready', round: S.round }); });
+    on('ivote', 'click', function (e) {
+      var b = e.target.closest ? e.target.closest('button') : null;
+      if (!b || b.disabled) return;
+      C.myVote = b.getAttribute('data-p');
+      send({ t: 'answer', round: S.round, val: C.myVote });
+      render();
+    });
+  }
+
+  // ---------- Rébus emoji ----------
+  function phoneRebus() {
+    var S = C.S, cur = S.cur;
+    var found = (cur.found || []).some(function (f) { return f.pid === me.pid; });
+    var key = 'rb|' + S.round + '|' + (found ? 1 : 0);
+    var fresh = setView(key, '<div class="ph">' + topbar() + headRow('Rébus emoji') +
+      '<div class="rebus"><span class="cat">' + esc(cur.cat || '') + '</span><span class="emo">' + esc(cur.e || '') + '</span></div>' +
+      (found ? '<div class="verdict ok" style="padding:12px"><span class="big" style="font-size:24px">Trouvé ! Bravo</span></div>' :
+        '<div class="guessrow"><input id="gs" class="input" maxlength="40" autocomplete="off" placeholder="Ta réponse"><button class="btn" id="gsend" style="width:auto">OK</button></div>') +
+      '<div class="grow"></div><div class="note" id="stat"></div></div>');
+    var nf = (cur.found || []).length, fb = (S.fb || {})[me.pid], msg = nf + '/' + S.players.length + ' ont trouvé';
+    if (!found && fb && fb.n !== C.fbN) { C.fbN = fb.n; C.fbMsg = fb.res === 'near' ? 'Presque ! Essaie encore' : 'Non… essaie encore'; }
+    if (!found && C.fbMsg) msg = C.fbMsg + ' · ' + msg;
+    $('stat').textContent = msg;
+    fit();
+    if (!fresh || found) return;
+    var go = function () {
+      var v = $('gs').value.replace(/\s+/g, ' ').trim();
+      if (!v) return;
+      send({ t: 'guess', round: S.round, text: v });
+      $('gs').value = '';
+      $('gs').focus();
+    };
+    on('gsend', 'click', go);
+    on('gs', 'keydown', function (e) { if (e.key === 'Enter') go(); });
+  }
+
+  // ---------- Petit Bac ----------
+  function phoneBac() {
+    var S = C.S, cur = S.cur, ans = answeredSet();
+    if (!C.bac || C.bac.round !== S.round) C.bac = { round: S.round, w: cur.cats.map(function () { return ''; }), done: false };
+    if (cur.step === 'write') {
+      var done = C.bac.done || ans[me.pid];
+      var key = 'pb|' + S.round + '|w|' + (done ? 1 : 0);
+      var fresh = setView(key, '<div class="ph">' + topbar() + headRow('Petit Bac') +
+        '<div class="bacletter"><span>Lettre</span><b>' + esc(cur.l) + '</b></div>' +
+        '<div class="stack" id="bacf" style="gap:8px">' + cur.cats.map(function (c, i) {
+          return '<label class="bacrow"><span>' + esc(c) + '</span><input class="input" data-i="' + i + '" maxlength="30" autocomplete="off" autocapitalize="sentences" value="' + esc(C.bac.w[i]) + '"' + (done ? ' disabled' : '') + '></label>';
+        }).join('') + '</div><div class="grow"></div>' +
+        (done ? '' : '<button class="btn" id="bdone">J\'ai fini</button>') + '<div class="note" id="stat"></div></div>');
+      $('stat').textContent = done ? 'Grille envoyée · ' + (S.answered || []).length + '/' + S.players.length + ' ont fini' : 'Un mot par catégorie, qui commence par ' + cur.l;
+      fit();
+      if (!fresh || done) return;
+      var t = null;
+      var push = function (fin) {
+        send({ t: 'answer', round: S.round, val: { w: C.bac.w.slice(), done: !!fin } });
+      };
+      on('bacf', 'input', function (e) {
+        var i = e.target.getAttribute && e.target.getAttribute('data-i');
+        if (i == null) return;
+        C.bac.w[Number(i)] = e.target.value;
+        clearTimeout(t);
+        t = setTimeout(function () { push(false); }, 500);
+      });
+      on('bacf', 'keydown', function (e) {
+        if (e.key !== 'Enter') return;
+        var i = Number(e.target.getAttribute('data-i')), nx = document.querySelector('#bacf input[data-i="' + (i + 1) + '"]');
+        if (nx) nx.focus(); else e.target.blur();
+      });
+      on('bdone', 'click', function () { clearTimeout(t); C.bac.done = true; push(true); render(); });
+      return;
+    }
+    // vérification croisée
+    var sheet = cur.sheet || {}, rej = S.bacRej || {}, checked = ans[me.pid];
+    var keyC = 'pb|' + S.round + '|c|' + (checked ? 1 : 0) + '|' + JSON.stringify(rej);
+    var rows = cur.cats.map(function (c, i) {
+      var chips = S.players.map(function (p) {
+        var x = (sheet[p.pid] || [])[i];
+        if (!x || !x.w) return '';
+        var k = p.pid + ':' + i, mineR = rej[k] && rej[k][me.pid], nR = rej[k] ? Object.keys(rej[k]).length : 0;
+        var cls = 'bchip' + (x.ok ? '' : ' bad') + (mineR ? ' rej' : '') + (p.pid === me.pid ? ' own' : '');
+        return '<button type="button" class="' + cls + '" data-k="' + k + '"' + (p.pid === me.pid || !x.ok || checked ? ' disabled' : '') + '>' +
+          '<i style="background:' + COLORS[p.color] + '"></i>' + esc(x.w) + (nR ? ' <small>✗' + nR + '</small>' : '') + '</button>';
+      }).join('');
+      return '<div class="bacchk"><span class="label">' + esc(c) + '</span><div class="bchips">' + (chips || '<span class="muted" style="font-size:13px">personne</span>') + '</div></div>';
+    }).join('');
+    var freshC = setView(keyC, '<div class="ph">' + topbar() + headRow('Petit Bac · vérification') +
+      '<div class="muted" style="font-size:13px;margin-top:-4px">Touchez un mot qui ne compte pas (inventé, hors sujet…). Barré par la moitié des joueurs, il ne rapporte rien.</div>' +
+      '<div class="stack" id="bchk" style="gap:6px">' + rows + '</div><div class="grow"></div>' +
+      (checked ? '' : '<button class="btn" id="cdone">C\'est bon pour moi</button>') + '<div class="note" id="stat"></div></div>');
+    $('stat').textContent = (S.answered || []).length + '/' + S.players.length + ' ont vérifié';
+    fit();
+    if (!freshC) return;
+    on('bchk', 'click', function (e) {
+      var b = e.target.closest ? e.target.closest('button') : null;
+      if (!b || b.disabled) return;
+      send({ t: 'bac', round: S.round, key: b.getAttribute('data-k') });
+    });
+    on('cdone', 'click', function () { send({ t: 'bac', round: S.round, done: true }); });
+  }
+
+  // ---------- Réflexe ----------
+  function nowMs() { return window.performance && performance.now ? performance.now() : Date.now(); }
+  function phoneReflexe() {
+    var S = C.S, cur = S.cur;
+    if (!C.rx || C.rx.round !== S.round) {
+      C.rx = { round: S.round, start: nowMs(), state: 'wait', go: 0, sent: null };
+      clearTimeout(C.rxT);
+      C.rxT = setTimeout(function () {
+        if (!C.rx || C.rx.round !== S.round || C.rx.state !== 'wait') return;
+        C.rx.state = 'go';
+        var pad = $('rxpad');
+        if (pad) { pad.className = 'rxpad go'; pad.innerHTML = '<b>TAPE !</b>'; }
+        C.rx.go = nowMs();
+        sfx('go');
+      }, cur.wait);
+    }
+    var rx = C.rx;
+    var key = 'rx|' + S.round + '|' + (rx.sent != null ? 1 : 0);
+    var inner = rx.sent != null ? (rx.sent < 0 ? '<b>Trop tôt !</b><span>Faux départ</span>' : '<b>' + Math.round(rx.sent) + ' ms</b><span>Envoyé</span>') :
+      rx.state === 'go' ? '<b>TAPE !</b>' : '<b>Attends…</b><span>Tape dès que l\'écran devient rouge</span>';
+    var fresh = setView(key, '<div class="ph">' + topbar() + headRow('Réflexe') +
+      '<button type="button" id="rxpad" class="rxpad' + (rx.sent != null ? ' sent' : rx.state === 'go' ? ' go' : '') + '">' + inner + '</button>' +
+      '<div class="note" id="stat"></div></div>');
+    $('stat').textContent = (S.answered || []).length + '/' + S.players.length + ' ont tapé';
+    fit();
+    if (!fresh || rx.sent != null) return;
+    $('rxpad').addEventListener('pointerdown', function (e) {
+      e.preventDefault();
+      if (C.rx.sent != null) return;
+      var v = C.rx.state === 'go' ? nowMs() - C.rx.go : -1;
+      C.rx.sent = v;
+      clearTimeout(C.rxT);
+      send({ t: 'answer', round: S.round, val: v < 0 ? 0 : Math.round(v) });
+      render();
+    });
+  }
+
+  // ---------- Mémoire flash ----------
+  function phoneMemo() {
+    var S = C.S, cur = S.cur, ans = answeredSet();
+    var done = C.myAns != null || ans[me.pid];
+    var key = 'me|' + S.round + '|' + cur.step + '|' + (done ? 1 : 0);
+    var grid;
+    if (cur.step === 'show') {
+      grid = '<div class="memo">' + (cur.grid || []).map(function (e) { return '<span>' + e + '</span>'; }).join('') + '</div>';
+    } else {
+      grid = '<div class="memo ask" id="mgrid">' + [0, 1, 2, 3, 4, 5, 6, 7, 8].map(function (i) {
+        return '<button type="button" data-i="' + i + '" class="' + (done && C.myAns === i ? 'sel' : '') + '"' + (done ? ' disabled' : '') + '>?</button>';
+      }).join('') + '</div>';
+    }
+    var head = cur.step === 'show' ? '<div class="memohead">Mémorise la grille !</div>' : '<div class="memohead">Où était <span class="emo">' + esc(cur.target || '') + '</span> ?</div>';
+    var fresh = setView(key, '<div class="ph">' + topbar() + headRow('Mémoire flash') + head + grid + '<div class="grow"></div><div class="note" id="stat"></div></div>');
+    $('stat').textContent = cur.step === 'show' ? 'La grille va disparaître…' : done ? statLine(true, (S.answered || []).length) : 'Touche la bonne case';
+    fit();
+    if (!fresh || cur.step !== 'ask' || done) return;
+    on('mgrid', 'click', function (e) {
+      var b = e.target.closest ? e.target.closest('button') : null;
+      if (!b || b.disabled) return;
+      C.myAns = Number(b.getAttribute('data-i'));
+      send({ t: 'answer', round: S.round, val: C.myAns });
+      render();
+    });
+  }
+
+  // ---------- Géo-Devine ----------
+  function mapSvg(id, opts) {
+    opts = opts || {};
+    var hi = opts.hi;
+    var paths = GEO.paths.map(function (p) {
+      return '<path d="' + p[1] + '"' + (hi && p[0] === hi ? ' class="hi"' : '') + '/>';
+    }).join('');
+    var marks = (opts.marks || []).map(function (m) {
+      return '<circle cx="' + m.x + '" cy="' + m.y + '" r="' + (m.r || 7) + '" fill="' + m.c + '" stroke="#1B1B1E" stroke-width="2"/>';
+    }).join('');
+    return '<svg id="' + id + '" class="map" viewBox="' + (opts.vb || ('0 0 ' + GEO.w + ' ' + GEO.h)) + '" preserveAspectRatio="xMidYMid meet"><rect x="-500" y="-500" width="2000" height="1400" class="sea"/>' +
+      '<g class="land">' + paths + '</g><g id="' + id + 'm">' + marks + '</g></svg>';
+  }
+  function phoneGeo() {
+    var S = C.S, cur = S.cur, ans = answeredSet();
+    if (!C.geo || C.geo.round !== S.round) C.geo = { round: S.round, zoom: null, pin: null, sent: false };
+    var g = C.geo, done = g.sent || ans[me.pid];
+    var key = 'geo|' + S.round + '|' + (done ? 1 : 0) + '|' + (g.zoom ? g.zoom.join(',') : '') + '|' + (g.pin ? 1 : 0);
+    var vb = g.zoom ? g.zoom.join(' ') : null;
+    var p = findP(me.pid);
+    var marks = g.pin ? [{ x: g.pin[0], y: g.pin[1], c: COLORS[p ? p.color : 0], r: g.zoom ? 4 : 7 }] : [];
+    var help = done ? 'Position envoyée' : !g.zoom ? '1. Touche la zone pour zoomer' : !g.pin ? '2. Touche l\'endroit exact' : 'Ça te va ?';
+    var fresh = setView(key, '<div class="ph">' + topbar() + headRow('Géo-Devine') +
+      '<div class="geoq"><span>Où se trouve</span><b>' + esc(cur.q) + '</b></div>' +
+      '<div class="mapbox">' + mapSvg('gmap', { vb: vb, marks: marks }) + '</div>' +
+      '<div class="muted" style="text-align:center;font-weight:700">' + help + '</div>' +
+      (done ? '' : '<div class="duo-btns"><button class="btn ghost" id="gback"' + (g.zoom ? '' : ' disabled') + '>Dézoomer</button><button class="btn" id="gok"' + (g.pin ? '' : ' disabled') + '>Valider</button></div>') +
+      '<div class="grow"></div><div class="note" id="stat"></div></div>');
+    $('stat').textContent = done ? statLine(true, (S.answered || []).length) : 'Plus tu es près, plus tu marques';
+    fit();
+    if (!fresh || done) return;
+    $('gmap').addEventListener('click', function (e) {
+      var svg = $('gmap'), r = svg.getBoundingClientRect();
+      var v = g.zoom || [0, 0, GEO.w, GEO.h];
+      // la carte garde ses proportions dans le cadre : on retrouve la zone réellement dessinée
+      var sc = Math.min(r.width / v[2], r.height / v[3]);
+      var ox = (r.width - v[2] * sc) / 2, oy = (r.height - v[3] * sc) / 2;
+      var x = v[0] + (e.clientX - r.left - ox) / sc, y = v[1] + (e.clientY - r.top - oy) / sc;
+      if (!g.zoom) {
+        var w = GEO.w / 3.2, h = GEO.h / 3.2;
+        g.zoom = [Math.round(Math.max(0, Math.min(GEO.w - w, x - w / 2))), Math.round(Math.max(0, Math.min(GEO.h - h, y - h / 2))), Math.round(w), Math.round(h)];
+      } else {
+        g.pin = [Math.round(x), Math.round(y)];
+      }
+      render();
+    });
+    on('gback', 'click', function () { g.zoom = null; g.pin = null; render(); });
+    on('gok', 'click', function () { if (!g.pin) return; g.sent = true; send({ t: 'answer', round: S.round, val: g.pin }); render(); });
+  }
+
+  // ---------- Pile-poil ----------
+  function phoneChrono() {
+    var S = C.S, cur = S.cur, ans = answeredSet();
+    if (!C.cl || C.cl.round !== S.round) C.cl = { round: S.round, start: nowMs(), sent: null };
+    var cl = C.cl, done = cl.sent != null || ans[me.pid];
+    var key = 'ch|' + S.round + '|' + (done ? 1 : 0);
+    var fresh = setView(key, '<div class="ph">' + topbar() +
+      '<div class="chronohead"><span>Compte dans ta tête</span><b>' + cur.n + ' secondes</b><span>et appuie au bon moment. Pas de triche avec une montre !</span></div>' +
+      '<button type="button" id="clbtn" class="clbtn' + (done ? ' sent' : '') + '"' + (done ? ' disabled' : '') + '>' + (done ? 'Envoyé' : 'STOP') + '</button>' +
+      '<div class="note" id="stat"></div></div>');
+    $('stat').textContent = (S.answered || []).length + '/' + S.players.length + ' ont appuyé';
+    fit();
+    if (!fresh || done) return;
+    $('clbtn').addEventListener('pointerdown', function (e) {
+      e.preventDefault();
+      if (C.cl.sent != null) return;
+      C.cl.sent = nowMs() - C.cl.start;
+      send({ t: 'answer', round: S.round, val: Math.round(C.cl.sent) });
+      render();
+    });
+  }
+  function secs(ms) { return (ms / 1000).toFixed(1).replace('.', ',') + ' s'; }
 
   // ---------- dessin partagé ----------
   var PEN_COLORS = ['#14121F', '#E5484D', '#2F7BFF', '#22A06B'];
@@ -1293,6 +1800,14 @@
   function tvQuestion() {
     if (C.S.cur.g === 'pyramide') return tvPyr();
     if (C.S.cur.g === 'croquis') return tvCroquis();
+    var G = C.S.cur.g;
+    if (G === 'imposteur') return tvImp();
+    if (G === 'rebus') return tvRebus();
+    if (G === 'petitbac') return tvBac();
+    if (G === 'reflexe') return tvReflexe();
+    if (G === 'memoire') return tvMemo();
+    if (G === 'geo') return tvGeo();
+    if (G === 'chrono') return tvChrono();
     var S = C.S, cur = S.cur, body = '';
     if (cur.g === 'culture') {
       body = '<div class="grid2">' + cur.c.map(function (t, i) {
@@ -1302,6 +1817,8 @@
       body = '<div class="muted" style="font-size:1.8rem">Tapez un nombre sur votre téléphone' + (cur.u ? ' — réponse en ' + esc(cur.u) : '') + '</div>';
     } else if (cur.g === 'bluff') {
       body = '<div class="muted" style="font-size:1.8rem">Inventez une fausse réponse crédible sur votre téléphone</div>';
+    } else if (cur.g === 'punchline') {
+      body = '<div class="muted" style="font-size:1.8rem">Écrivez la réponse la plus drôle sur votre téléphone</div>';
     } else if (cur.g === 'ordre') {
       body = '<div class="grid4">' + cur.items.map(function (it) {
         return '<div class="ocard"><span class="t">' + esc(it.t) + '</span></div>';
@@ -1341,12 +1858,169 @@
     if (fresh) setupCanvas($('cv'));
   }
 
+  // ================= NOUVEAUX JEUX (télé) =================
+  function tvImp() {
+    var S = C.S, cur = S.cur, ans = answeredSet();
+    var order = (cur.talk || []).map(function (pid, i) {
+      var p = findP(pid);
+      return p ? '<div class="talk' + (ans[pid] ? ' ok' : '') + '"><span class="n1">' + (i + 1) + '</span>' + avR(p, 3) + '<span>' + esc(p.name) + '</span>' + (ans[pid] && cur.step === 'talk' ? '<span class="chip">prêt</span>' : '') + '</div>' : '';
+    }).join('');
+    setView('timp|' + S.round + '|' + cur.step, '<div class="tvw">' + tvBar(true) +
+      (cur.step === 'talk' ?
+        '<h1 class="q">Chacun dit un mot sur son mot secret, dans l\'ordre</h1><div class="talks" id="talks"></div>' +
+        '<div class="foot muted">Un joueur a un mot différent… Quand tout le monde a parlé, appuyez sur « On passe au vote »</div>' :
+        '<h1 class="q">Qui est l\'imposteur ?</h1><div class="muted" style="font-size:1.8rem">Votez sur votre téléphone</div><div class="foot" id="who"></div>') + '</div>');
+    if ($('talks')) $('talks').innerHTML = order;
+    if ($('who')) $('who').innerHTML = tvWho('Ont voté');
+  }
+
+  function tvRebus() {
+    var S = C.S, cur = S.cur, found = {};
+    (cur.found || []).forEach(function (f) { found[f.pid] = true; });
+    setView('trb|' + S.round, '<div class="tvw">' + tvBar(true, cur.cat) + '<div class="rebus tv"><span class="emo">' + esc(cur.e || '') + '</span></div>' +
+      '<div class="feed" id="feed"></div><div class="foot" id="who"></div></div>');
+    $('feed').innerHTML = (S.feed || []).slice(-4).map(function (f) {
+      var p = findP(f.pid);
+      return p ? '<div class="srow">' + avR(p, 2.2) + '<span class="n">' + (f.ok ? '<b style="color:var(--good-ink)">a trouvé !</b>' : esc(f.text) + (f.near ? ' <span class="muted">(presque)</span>' : '')) + '</span></div>' : '';
+    }).join('');
+    $('who').innerHTML = '<span class="muted">Ont trouvé</span>' + S.players.map(function (p) {
+      return '<span class="who-it' + (found[p.pid] ? '' : ' off') + '">' + avR(p, 2.8, !found[p.pid]) + esc(p.name) + '</span>';
+    }).join('');
+  }
+
+  function bacTable(cur, opts) {
+    var S = C.S, sheet = cur.sheet || {}, rej = S.bacRej || {}, res = opts.res;
+    var ps = S.players.filter(function (p) { return sheet[p.pid] || (res && res[p.pid] && res[p.pid].marks); });
+    var head = '<tr><th></th>' + ps.map(function (p) { return '<th>' + avR(p, 2) + ' ' + esc(p.name) + '</th>'; }).join('') + '</tr>';
+    var rows = cur.cats.map(function (c, i) {
+      return '<tr><td class="cat">' + esc(c) + '</td>' + ps.map(function (p) {
+        if (res) {
+          var m = ((res[p.pid] || {}).marks || [])[i] || { st: 'empty' };
+          return '<td class="bac-' + m.st + '">' + esc(m.w || '—') + (m.pts ? ' <b>+' + m.pts + '</b>' : '') + '</td>';
+        }
+        var x = (sheet[p.pid] || [])[i] || {}, n = rej[p.pid + ':' + i] ? Object.keys(rej[p.pid + ':' + i]).length : 0;
+        return '<td class="' + (!x.w ? 'bac-empty' : !x.ok ? 'bac-bad' : n ? 'bac-rej' : '') + '">' + esc(x.w || '—') + (n ? ' <small>✗' + n + '</small>' : '') + '</td>';
+      }).join('') + '</tr>';
+    }).join('');
+    var tot = res ? '<tr><td class="cat">Total</td>' + ps.map(function (p) { return '<td><b>+' + ((res[p.pid] || {}).pts || 0) + '</b></td>'; }).join('') + '</tr>' : '';
+    return '<table class="bactab">' + head + rows + tot + '</table>';
+  }
+
+  function tvBac() {
+    var S = C.S, cur = S.cur;
+    if (cur.step === 'write') {
+      setView('tpb|' + S.round + '|w', '<div class="tvw">' + tvBar(true) +
+        '<div class="bacwrap"><div class="bacbig"><span>Lettre</span><b>' + esc(cur.l) + '</b></div><div class="baccats">' +
+        cur.cats.map(function (c) { return '<div>' + esc(c) + '</div>'; }).join('') + '</div></div>' +
+        '<div class="foot" id="who"></div></div>');
+      $('who').innerHTML = tvWho('Ont fini');
+      return;
+    }
+    setView('tpb|' + S.round + '|c|' + JSON.stringify(S.bacRej || {}) + '|' + (S.answered || []).length, '<div class="tvw">' + tvBar(true, 'Vérification · lettre ' + cur.l) +
+      bacTable(cur, {}) + '<div class="foot muted">Barrez sur votre téléphone les mots qui ne comptent pas</div></div>');
+  }
+
+  function tvReflexe() {
+    var S = C.S, cur = S.cur;
+    var fresh = setView('trx|' + S.round, '<div class="tvw">' + tvBar(false) + '<div class="rxtv" id="rxtv"><b>Attendez le rouge…</b><span>puis tapez sur votre téléphone</span></div><div class="foot" id="who"></div></div>');
+    $('who').innerHTML = tvWho('Ont tapé');
+    if (fresh) {
+      clearTimeout(C.rxTv);
+      C.rxTv = setTimeout(function () { var el = $('rxtv'); if (el) { el.className = 'rxtv go'; el.innerHTML = '<b>TAPEZ !</b>'; sfx('go'); } }, cur.wait);
+    }
+  }
+
+  function memoGrid(cells, cls) { return '<div class="memo ' + (cls || '') + '">' + cells.join('') + '</div>'; }
+
+  function tvMemo() {
+    var S = C.S, cur = S.cur;
+    if (cur.step === 'show') {
+      setView('tme|' + S.round + '|s', '<div class="tvw">' + tvBar(true) + '<h1 class="q" style="font-size:2.3rem">Mémorisez la grille !</h1>' +
+        memoGrid((cur.grid || []).map(function (e) { return '<span>' + e + '</span>'; }), 'tv') + '</div>');
+      return;
+    }
+    setView('tme|' + S.round + '|a', '<div class="tvw">' + tvBar(true) + '<h1 class="q" style="font-size:2.3rem">Où était <span class="emo">' + esc(cur.target || '') + '</span> ?</h1>' +
+      memoGrid([0, 1, 2, 3, 4, 5, 6, 7, 8].map(function () { return '<span class="q">?</span>'; }), 'tv') + '<div class="foot" id="who"></div></div>');
+    $('who').innerHTML = tvWho();
+  }
+
+  function tvGeo() {
+    var S = C.S, cur = S.cur;
+    setView('tgeo|' + S.round, '<div class="tvw">' + tvBar(true) + '<div class="geoq tv"><span>Où se trouve</span><b>' + esc(cur.q) + '</b></div>' +
+      '<div class="mapbox tv">' + mapSvg('tmap') + '</div><div class="foot" id="who"></div></div>');
+    $('who').innerHTML = tvWho();
+  }
+
+  function tvChrono() {
+    var S = C.S, cur = S.cur;
+    setView('tch|' + S.round, '<div class="tvw">' + tvBar(false) + '<div class="chronotv"><span>Comptez dans votre tête</span><b>' + cur.n + ' secondes</b>' +
+      '<span>et appuyez sur STOP au bon moment</span></div><div class="foot" id="who"></div></div>');
+    $('who').innerHTML = tvWho('Ont appuyé');
+  }
+
+  // Résultats des nouveaux jeux sur la télé (corps de l'écran)
+  function tvNewReveal(cur, res) {
+    var S = C.S;
+    function rows(list, cells, two) {
+      return '<div class="erows' + (two || list.length > 4 ? ' two' : '') + '">' + list.map(function (p) {
+        var r = res[p.pid] || {};
+        return '<div class="erow">' + avR(p, 2.6) + '<span class="n">' + esc(p.name) + '</span>' + cells(r, p) + '<span class="g">' + (r.pts ? '+' + r.pts : '') + '</span></div>';
+      }).join('') + '</div>';
+    }
+    if (cur.g === 'imposteur') {
+      var imp = findP(cur.imp), pair = qOf(cur).a || ['?', '?'];
+      return '<div class="imprev"><div class="impw"><span>Le mot des autres</span><b>' + esc(pair[cur.ci]) + '</b></div><div class="impw imp"><span>Le mot de l\'imposteur</span><b>' + esc(pair[1 - cur.ci]) + '</b></div></div>' +
+        '<div class="bigres ' + (cur.caught ? 'good' : '') + '">' + (imp ? avR(imp, 3) + ' ' : '') + esc(imp ? imp.name : '?') + (cur.caught ? ' est démasqué !' : ' s\'en sort !') + '</div>' +
+        rows(S.players, function (r) { var v = r.vote ? findP(r.vote) : null; return '<span class="d">' + (v ? 'vote ' + esc(v.name) : 'pas de vote') + '</span>'; });
+    }
+    if (cur.g === 'punchline') {
+      return '<div class="grid2 small">' + (S.options || []).map(function (o, i) {
+        var by = findP(o.by), r = res[o.by] || {};
+        var voters = S.players.filter(function (p) { return res[p.pid] && res[p.pid].voted === o.id; });
+        return '<div class="opt col ' + (r.top ? 'good' : '') + '"><div style="display:flex;align-items:center;gap:1rem"><span class="letter">' + LETTERS2[i] + '</span><span class="t">' + esc(o.text) + '</span></div>' +
+          '<div class="meta"><span class="liartag">' + (by ? avR(by, 1.8) + esc(by.name) : '') + '</span><span class="who">' + voters.map(function (p) { return avR(p, 2); }).join('') + '</span></div></div>';
+      }).join('') + '</div>';
+    }
+    if (cur.g === 'rebus') {
+      var finders = (cur.found || []).map(function (f) { var p = findP(f.pid); return p ? '<div class="srow">' + avR(p, 2.4) + '<span class="n">' + esc(p.name) + '</span><span class="g">+' + ((res[f.pid] || {}).pts || 0) + '</span></div>' : ''; }).join('');
+      return '<div class="rebus tv sm"><span class="emo">' + esc(cur.e || '') + '</span></div><div class="truth">' + esc(cur.a) + '</div>' +
+        (finders || '<div class="muted" style="font-size:1.4rem">Personne n\'a trouvé</div>');
+    }
+    if (cur.g === 'petitbac') return bacTable(cur, { res: res });
+    if (cur.g === 'reflexe') {
+      var listR = S.players.slice().sort(function (a, b) {
+        var ra = res[a.pid] || {}, rb = res[b.pid] || {};
+        var va = ra.v == null || ra.early ? 1e9 : ra.v, vb = rb.v == null || rb.early ? 1e9 : rb.v;
+        return va - vb;
+      });
+      return rows(listR, function (r) { return '<span class="v">' + (r.v == null ? '—' : r.early ? 'faux départ' : r.v + ' ms') + '</span>'; });
+    }
+    if (cur.g === 'memoire') {
+      return '<div class="memorev">' + memoGrid((cur.grid || []).map(function (e, i) {
+        var pk = S.players.filter(function (p) { return res[p.pid] && res[p.pid].v === i; });
+        return '<span class="' + (i === cur.ans ? 'good' : '') + '">' + e + '<i>' + pk.map(function (p) { return avR(p, 1.6); }).join('') + '</i></span>';
+      }), 'tv sm') + '</div>';
+    }
+    if (cur.g === 'geo') {
+      var mk = S.players.filter(function (p) { return res[p.pid] && res[p.pid].v; }).map(function (p) { return { x: res[p.pid].v[0], y: res[p.pid].v[1], c: COLORS[p.color] }; });
+      if (cur.c2) mk.push({ x: cur.c2[0], y: cur.c2[1], c: '#FFFFFF', r: 4 });
+      var listG = S.players.slice().sort(function (a, b) { return ((res[a.pid] || {}).km == null ? 1e9 : res[a.pid].km) - ((res[b.pid] || {}).km == null ? 1e9 : res[b.pid].km); });
+      return '<div class="georev"><div class="mapbox tv">' + mapSvg('rmap', { hi: cur.k, marks: mk }) + '</div>' +
+        rows(listG, function (r) { return '<span class="v">' + (r.v == null ? '—' : r.inside ? 'dedans !' : fmt(r.km) + ' km') + '</span>'; }, true) + '</div>';
+    }
+    if (cur.g === 'chrono') {
+      var listC = S.players.slice().sort(function (a, b) { return ((res[a.pid] || {}).diff == null ? 1e9 : res[a.pid].diff) - ((res[b.pid] || {}).diff == null ? 1e9 : res[b.pid].diff); });
+      return '<div class="truth">' + cur.n + ' s</div>' + rows(listC, function (r) { return '<span class="v">' + (r.v == null ? '—' : secs(r.v)) + '</span><span class="d">' + (r.v == null ? '' : r.diff < 50 ? 'pile-poil !' : 'écart ' + secs(r.diff)) + '</span>'; });
+    }
+    return null;
+  }
+
   function tvVote() {
     var S = C.S, cur = S.cur;
     var opts = (S.options || []).map(function (o, i) {
       return '<div class="opt"><span class="letter">' + LETTERS2[i] + '</span><span class="t">' + esc(o.text) + '</span></div>';
     }).join('');
-    setView('tv|' + S.round, '<div class="tvw">' + tvBar(true, 'Votez !') + '<h1 class="q" style="font-size:2.6rem">' + esc(cur.q) + '</h1>' +
+    setView('tv|' + S.round, '<div class="tvw">' + tvBar(true, cur.g === 'punchline' ? 'Votez pour la plus drôle !' : 'Votez !') + '<h1 class="q" style="font-size:2.6rem">' + esc(cur.q) + '</h1>' +
       '<div class="grid2 small">' + opts + '</div><div class="foot" id="who"></div></div>');
     $('who').innerHTML = tvWho('Ont voté');
   }
@@ -1422,7 +2096,14 @@
         (dr && (res[cur.drawer] || {}).pts ? '<div class="srow">' + avR(dr, 2.4) + '<span class="n">' + esc(dr.name) + ' (dessin)</span><span class="g">+' + res[cur.drawer].pts + '</span></div>' : '') + '</div></div>';
     }
     var next = S.round >= S.deck.length ? 'le classement final' : 'l\'épreuve suivante';
-    var titleQ = cur.g === 'pyramide' ? 'Pyramide' : cur.g === 'croquis' ? 'Croquis' : cur.q;
+    var nb = tvNewReveal(cur, res);
+    if (nb != null) {
+      body = nb;
+      var head = cur.g === 'punchline' ? '<h1 class="q" style="font-size:2.2rem">' + esc(cur.q) + '</h1>' : cur.g === 'geo' ? '<div class="geoq tv"><b style="font-size:2.6rem">' + esc(cur.q) + '</b></div>' : '';
+      setView('trev|' + S.round, '<div class="tvw"><div class="split"><div style="flex:1;display:flex;flex-direction:column;gap:1.6rem;min-width:0">' + tvBar(false) + head + body +
+        '<div class="foot muted">' + esc(capName()) + ' lance ' + next + ' depuis son téléphone</div></div>' + tvSide() + '</div></div>');
+      return;
+    }
     if (cur.g === 'pyramide' || cur.g === 'croquis') {
       setView('trev|' + S.round, '<div class="tvw"><div class="split"><div style="flex:1;display:flex;flex-direction:column;gap:1.6rem;min-width:0">' + tvBar(false) + body +
         '<div class="foot muted">' + esc(capName()) + ' lance ' + next + ' depuis son téléphone</div></div>' + tvSide() + '</div></div>');
@@ -1466,7 +2147,8 @@
       '<div class="stack"><label class="label" for="code">Rejoindre une partie</label><input id="code" class="input code" maxlength="4" placeholder="CODE" autocomplete="off" autocapitalize="characters">' +
       '<button class="btn" id="join">Rejoindre</button></div>' +
       '<div class="stack" style="margin-top:14px"><button class="btn ghost col" id="mk"><span>Créer une partie ici</span><span class="sub">Sans télé : ce téléphone sert de plateau</span></button>' +
-      '<button class="btn ghost col" id="tvb"><span>Ouvrir l\'écran télé</span><span class="sub">À lancer depuis le navigateur de la télé</span></button></div></div>';
+      '<button class="btn ghost col" id="tvb"><span>Ouvrir l\'écran télé</span><span class="sub">À lancer depuis le navigateur de la télé</span></button>' +
+      '<button class="linkbtn" id="hseason">🏆 Classement de la saison</button></div></div>';
     function go() {
       var c = $('code').value.toUpperCase().replace(/[^A-Z]/g, '');
       if (c.length !== 4) { $('code').focus(); return; }
@@ -1476,7 +2158,25 @@
     on('code', 'keydown', function (e) { if (e.key === 'Enter') go(); });
     on('mk', 'click', function () { createRoom(false); });
     on('tvb', 'click', function () { location.href = location.pathname + '?tv'; });
+    on('hseason', 'click', showSeasonHome);
     fit();
+  }
+
+  // Classement de la saison, consultable sans partie en cours
+  function showSeasonHome() {
+    document.body.className = 'phone';
+    C.view = 'hseason';
+    var draw = function () {
+      if (C.view !== 'hseason') return;
+      var se = DATA.season;
+      app.innerHTML = '<div class="ph">' + screenHead(se ? se.label : 'Saison') + '<div class="plist">' + seasonList(se) + '</div>' +
+        '<div class="grow"></div><button class="btn" id="done">Retour à l\'accueil</button></div>';
+      on('done', 'click', showHome);
+      on('back', 'click', showHome);
+      fit();
+    };
+    draw();
+    loadSeason(draw);
   }
 
   function showClosed(by) {

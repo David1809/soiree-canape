@@ -58,7 +58,17 @@ def emit(media, sel, body):
 for media, sel, d in rules:
     if 'gap' not in d and d.get('display') != 'grid':
         continue
-    allp = by_sel.get(sel, d)
+    allp = dict(by_sel.get(sel, d))
+    # « .tvw .memo.tv { gap } » : la grille vient de la règle « .memo »
+    if 'display' not in allp:
+        last = re.split(r'[\s>+~]+', sel.split(',')[0].strip())[-1]
+        mine = set(re.findall(r'\.([\w-]+)', last))
+        for full, decls in by_sel.items():
+            lc = re.split(r'[\s>+~]+', full.split(',')[0].strip())[-1]
+            cls = set(re.findall(r'\.([\w-]+)', lc))
+            if cls and cls <= mine and decls.get('display') == 'grid':
+                for k in ('display', 'grid-template-columns', 'grid-auto-flow', 'align-items'):
+                    if k in decls and k not in allp: allp[k] = decls[k]
     g = d.get('gap') or allp.get('gap') or '0px'
     parts = g.split()
     row, col = parts[0], parts[1] if len(parts) > 1 else parts[0]
@@ -76,13 +86,13 @@ for media, sel, d in rules:
         fixed = None if rep else (toks[0] if toks[0].endswith('px') else None)
         va = 'middle' if allp.get('align-items') == 'center' else 'top'
         emit(media, sel, 'display: block; font-size: inherit;')
-        emit(media, kids(sel, '*'), 'display: inline-flex; vertical-align: %s; box-sizing: border-box; margin-left: %s;' % (va, col))
-        emit(media, kids(sel, 'input') + ', ' + kids(sel, 'select'), 'display: inline-block;')
+        emit(media, kids(sel, '*'), 'display: inline-flex !important; vertical-align: %s; box-sizing: border-box; margin-left: %s;' % (va, col))
+        emit(media, kids(sel, 'input') + ', ' + kids(sel, 'select'), 'display: inline-block !important;')
         if fixed and n == 2:
-            emit(media, kids(sel, '*:nth-child(2n+1)'), 'width: %s;' % fixed)
-            emit(media, kids(sel, '*:nth-child(2n)'), 'width: calc(100%% - %s - %s - 1px);' % (fixed, col))
+            emit(media, kids(sel, '*:nth-child(2n+1)'), 'width: %s !important;' % fixed)
+            emit(media, kids(sel, '*:nth-child(2n)'), 'width: calc(100%% - %s - %s - 1px) !important;' % (fixed, col))
         else:
-            emit(media, kids(sel, '*'), 'width: calc((100%% - %d * %s) / %d - 1px);' % (n - 1, col, n))
+            emit(media, kids(sel, '*'), 'width: calc((100%% - %d * %s) / %d - 1px) !important;' % (n - 1, col, n))
         emit(media, kids(sel, '*:nth-child(%dn+1)' % n), 'margin-left: 0;')
         emit(media, kids(sel, '*:nth-child(n+%d)' % (n + 1)), 'margin-top: %s;' % row)
         continue

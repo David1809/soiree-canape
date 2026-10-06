@@ -10,9 +10,22 @@
     estimation: { name: 'Estimation', time: 30 },
     bluff: { name: 'Le Bluff', time: 60, voteTime: 30 },
     ordre: { name: 'Dans l\'ordre !', time: 30 },
-    pyramide: { name: 'Pyramide', time: 30, announceTime: 12, min: 2 },
-    croquis: { name: 'Croquis', time: 60, min: 2 }
+    pyramide: { name: 'Pyramide', time: 30, announceTime: 12, min: 2, duo: true },
+    croquis: { name: 'Croquis', time: 60, min: 2 },
+    imposteur: { name: 'L\'Imposteur', time: 60, voteTime: 30, min: 3 },
+    punchline: { name: 'Punchline', time: 60, voteTime: 30, min: 3 },
+    rebus: { name: 'Rébus emoji', time: 45 },
+    petitbac: { name: 'Petit Bac', time: 60, checkTime: 35, min: 2 },
+    reflexe: { name: 'Réflexe', time: 15, fixed: true },
+    memoire: { name: 'Mémoire flash', time: 15, showTime: 5 },
+    geo: { name: 'Géo-Devine', time: 25 },
+    chrono: { name: 'Pile-poil', time: 70, fixed: true }
   };
+  // duo : seuls deux joueurs jouent (jamais en finale) ; fixed : chrono indépendant du rythme
+  var BAC_POINTS = { unique: 6, shared: 3 };
+  // emojis connus des vieux téléphones et des télés (Unicode 9 au plus)
+  var MEMO_POOL = ['🍕', '🚀', '🐶', '🎸', '⚽', '🌵', '🍩', '🎩', '🐙', '🚲', '🍉', '📷', '🦊', '🎈', '🍔', '🐢', '🌈', '🔑', '🎁', '🐝',
+    '🍓', '🚗', '⏰', '🐧', '🎧', '🍦', '🌻', '👑', '🦁', '🍌', '🏀', '🐸', '🎂', '💎', '🚁', '🐼', '🍿', '⛄', '🐳', '🔥'];
   var OFFLINE_MS = 25000;
   var ABANDON_MS = 60000; // partie abandonnée : plus aucun téléphone depuis 1 min
   var LIE_MAX = 60;
@@ -169,6 +182,68 @@
     });
   }
 
+  // Finale (points doubles) : jamais un jeu où seuls deux joueurs jouent.
+  function fixFinale(deck) {
+    var n = deck.length;
+    if (n < 6) return deck;
+    for (var i = n - 2; i < n; i++) {
+      if (!GAMES[deck[i].g].duo) continue;
+      for (var j = n - 3; j >= 0; j--) {
+        if (GAMES[deck[j].g].duo) continue;
+        var t = deck[i]; deck[i] = deck[j]; deck[j] = t;
+        break;
+      }
+    }
+    return deck;
+  }
+
+  // ---------- Géo-Devine : géométrie ----------
+  var geoCache = {};
+  function geoRings(geo, key) {
+    if (geoCache[key]) return geoCache[key];
+    var d = null;
+    for (var i = 0; i < geo.paths.length; i++) if (geo.paths[i][0] === key) d = geo.paths[i][1];
+    var rings = !d ? [] : d.split('M').filter(Boolean).map(function (part) {
+      return part.replace('Z', '').split('L').map(function (pt) { var xy = pt.split(' '); return [Number(xy[0]), Number(xy[1])]; });
+    });
+    geoCache[key] = rings;
+    return rings;
+  }
+  function insideRings(rings, x, y) {
+    var inside = false;
+    rings.forEach(function (r) {
+      for (var i = 0, j = r.length - 1; i < r.length; j = i++) {
+        var xi = r[i][0], yi = r[i][1], xj = r[j][0], yj = r[j][1];
+        if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) inside = !inside;
+      }
+    });
+    return inside;
+  }
+  function toLonLat(geo, x, y) { return [x / geo.w * 360 - 180, geo.top - y / geo.h * (geo.top - geo.bot)]; }
+  function kmBetween(a, b) {
+    var R = 6371, rad = Math.PI / 180;
+    var dLat = (b[1] - a[1]) * rad, dLon = (b[0] - a[0]) * rad;
+    var h = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(a[1] * rad) * Math.cos(b[1] * rad) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+  }
+  // Distance (km) entre un point tapé et le pays : 0 si dedans, sinon le bord le plus proche.
+  function geoDistance(geo, key, x, y) {
+    var rings = geoRings(geo, key);
+    if (insideRings(rings, x, y)) return 0;
+    var p = toLonLat(geo, x, y), best = Infinity;
+    rings.forEach(function (r) { r.forEach(function (pt) { var d = kmBetween(p, toLonLat(geo, pt[0], pt[1])); if (d < best) best = d; }); });
+    return Math.round(best);
+  }
+  function geoPoints(km) { return km === 0 ? 30 : km <= 500 ? 20 : km <= 1500 ? 12 : km <= 3000 ? 6 : 0; }
+
+  // Petit Bac : première lettre réelle d'un mot (sans accent ni article).
+  function firstLetter(w) {
+    var t = String(w || '').toLowerCase();
+    if (t.normalize) t = t.normalize('NFD').replace(/[̀-ͯ]/g, '');
+    t = t.replace(/œ/g, 'oe').replace(/æ/g, 'ae').replace(/^[^a-z0-9]+/, '');
+    return t.charAt(0);
+  }
+
   function findQuestion(bank, g, id) {
     var list = bank[g] || [];
     for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i];
@@ -182,7 +257,7 @@
       phase: 'lobby',
       players: [],
       captain: null,
-      settings: sanitizeSettings({ count: 15, games: ['culture', 'estimation', 'bluff', 'ordre', 'pyramide', 'croquis'], finale: true }, {}),
+      settings: sanitizeSettings({ count: 15, games: Object.keys(GAMES), finale: true }, {}),
       deck: [],
       round: 0,
       cur: null,
@@ -200,13 +275,26 @@
     var p = clone(s);
     p.deck = s.deck.map(function (d) { return d.g; });
     if (p.phase === 'question' || p.phase === 'vote') {
-      if (p.cur) { delete p.cur.a; delete p.cur.alt; delete p.cur.order; delete p.cur.vals; }
+      if (p.cur) {
+        delete p.cur.a; delete p.cur.alt; delete p.cur.order; delete p.cur.vals;
+        delete p.cur.k; delete p.cur.c2; delete p.cur.ans;
+        // Mémoire flash : la grille disparaît quand vient la question
+        if (p.cur.g === 'memoire' && p.cur.step === 'ask') delete p.cur.grid;
+        if (p.cur.g === 'memoire' && p.cur.step === 'show') delete p.cur.target;
+      }
     }
     if (p.phase === 'question' && p.cur && p.cur.found) {
       p.cur.found = p.cur.found.map(function (f) { return { pid: f.pid }; });
     }
     if (p.phase === 'question') {
+      var cur = s.cur || {};
       p.answered = Object.keys(s.answers);
+      if (cur.g === 'imposteur' && cur.step === 'talk') p.answered = Object.keys(s.ready || {});
+      if (cur.g === 'petitbac' && cur.step === 'check') p.answered = Object.keys(s.checked || {});
+      if (cur.g === 'petitbac' && cur.step === 'write') {
+        // on montre seulement qui a fini, pas les réponses
+        p.answered = Object.keys(s.answers).filter(function (pid) { return s.answers[pid].done; });
+      }
       p.answers = {};
     } else if (p.phase === 'vote') {
       p.answered = Object.keys(s.votes || {});
@@ -293,11 +381,21 @@
     var done = false;
     if (s.phase === 'question') {
       if (cur.g === 'pyramide') done = false;
-      else if (cur.g === 'croquis') {
+      else if (cur.g === 'croquis' || cur.g === 'rebus') {
         var found = {};
         cur.found.forEach(function (f) { found[f.pid] = true; });
         var guessers = act.filter(function (p) { return p.pid !== cur.drawer; });
         done = guessers.length > 0 && guessers.every(function (p) { return found[p.pid]; });
+      } else if (cur.g === 'imposteur' && cur.step === 'talk') {
+        if (act.every(function (p) { return s.ready[p.pid]; })) { this.nextStep('vote', 'voteTime'); return true; }
+        return false;
+      } else if (cur.g === 'petitbac' && cur.step === 'write') {
+        if (act.every(function (p) { return s.answers[p.pid] && s.answers[p.pid].done; })) { this.startBacCheck(); return true; }
+        return false;
+      } else if (cur.g === 'petitbac' && cur.step === 'check') {
+        done = act.every(function (p) { return s.checked[p.pid]; });
+      } else if (cur.g === 'memoire' && cur.step === 'show') {
+        done = false;
       } else done = act.every(function (p) { return s.answers[p.pid]; });
       if (done) { this.closeQuestion(); return true; }
     } else if (s.phase === 'vote') {
@@ -322,7 +420,7 @@
 
   // Durée d'un chrono selon le rythme choisi (calme / normal / rapide).
   Engine.prototype.dur = function (g, key) {
-    var pace = PACE[(this.s.settings || {}).pace] || 1;
+    var pace = GAMES[g].fixed ? 1 : (PACE[(this.s.settings || {}).pace] || 1);
     return Math.round(GAMES[g][key || 'time'] * pace) * 1000;
   };
 
@@ -393,6 +491,12 @@
       case 'guess':
         this.guess(m);
         break;
+      case 'bac':
+        this.bac(m);
+        break;
+      case 'ready':
+        this.ready(m);
+        break;
       case 'hello':
         this.publish(false);
         break;
@@ -449,10 +553,46 @@
   Engine.prototype.answer = function (m) {
     var s = this.s;
     if (s.phase !== 'question' || !s.cur || m.round !== s.round) return;
-    if (!this.player(m.pid) || s.answers[m.pid]) return;
-    var v = m.val;
-    if (s.cur.g === 'pyramide' || s.cur.g === 'croquis') return;
-    if (s.cur.g === 'culture') {
+    if (!this.player(m.pid)) return;
+    var v = m.val, cur = s.cur, now = this.now();
+    // Petit Bac : la grille se met à jour en continu jusqu'à « J'ai fini »
+    if (cur.g === 'petitbac') {
+      if (cur.step !== 'write' || (s.answers[m.pid] && s.answers[m.pid].done)) return;
+      if (!v || !Array.isArray(v.w)) return;
+      var w = cur.cats.map(function (_, i) { return String(v.w[i] == null ? '' : v.w[i]).slice(0, 30); });
+      s.answers[m.pid] = { w: w, done: !!v.done, t: now - cur.startedAt };
+      if (!v.done || !this.checkDone()) this.publish(false);
+      return;
+    }
+    if (s.answers[m.pid]) return;
+    if (cur.g === 'pyramide' || cur.g === 'croquis' || cur.g === 'rebus') return;
+    if (cur.g === 'imposteur') {
+      if (cur.step !== 'vote' || v === m.pid || !this.player(v)) return;
+    } else if (cur.g === 'reflexe') {
+      if (typeof v !== 'number' || !isFinite(v) || v > 15000) return;
+      if (v < 100) v = -1; // parti avant le signal (ou impossible à battre) : faux départ
+    } else if (cur.g === 'chrono') {
+      if (typeof v !== 'number' || !isFinite(v) || v < 0 || v > 80000) return;
+    } else if (cur.g === 'memoire') {
+      if (cur.step !== 'ask' || typeof v !== 'number' || v !== Math.floor(v) || v < 0 || v > 8) return;
+      s.answers[m.pid] = { v: v, t: now - (cur.stepAt || cur.startedAt) };
+      if (!this.checkDone()) this.publish(false);
+      return;
+    } else if (cur.g === 'geo') {
+      if (!Array.isArray(v) || v.length !== 2 || !isFinite(v[0]) || !isFinite(v[1])) return;
+      v = [Math.round(Number(v[0])), Math.round(Number(v[1]))];
+    } else if (cur.g === 'punchline') {
+      v = String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, LIE_MAX);
+      if (!normText(v)) return;
+      s.reject = s.reject || {};
+      var dupP = Object.keys(s.answers).some(function (pid) { return similar(v, s.answers[pid].v); });
+      if (dupP) {
+        s.reject[m.pid] = { why: 'dup', n: (s.reject[m.pid] ? s.reject[m.pid].n : 0) + 1 };
+        this.publish(false);
+        return;
+      }
+      delete s.reject[m.pid];
+    } else if (s.cur.g === 'culture') {
       if (typeof v !== 'number' || v !== Math.floor(v) || v < 0 || v > 3) return;
     } else if (s.cur.g === 'estimation') {
       if (typeof v !== 'number' || !isFinite(v)) return;
@@ -528,6 +668,7 @@
       pace: pickOf(n.pace, ['calme', 'normal', 'rapide'], old.pace || 'normal'),
       diff: pickOf(n.diff, ['facile', 'mixte', 'difficile'], old.diff || 'mixte'),
       teams: n.teams === undefined ? !!old.teams : !!n.teams,
+      sound: n.sound === undefined ? old.sound !== false : !!n.sound,
       freq: freq
     };
   }
@@ -558,6 +699,7 @@
     var excluded = this.o.getExcluded ? this.o.getExcluded() : {};
     s.deck = buildDeck(s.settings.count, games, this.o.bank, played,
       { excluded: excluded, freq: s.settings.freq, mode: s.settings.mode, diff: s.settings.diff });
+    if (s.settings.finale) fixFinale(s.deck);
     s.round = 0;
     s.result = null;
     this.nextRound();
@@ -629,6 +771,59 @@
       s.feed = [];
       s.fb = {};
     }
+    if (item.g === 'rebus') {
+      s.cur.e = q.e;
+      s.cur.cat = q.c;
+      s.cur.alt = q.alt || [];
+      s.cur.found = [];
+      s.feed = [];
+      s.fb = {};
+    }
+    if (item.g === 'imposteur') {
+      // les téléphones retrouvent les mots dans leur banque ; la télé n'affiche jamais qui est l'imposteur
+      s.cur.imp = this.pick('imp');
+      s.cur.ci = Math.random() < 0.5 ? 0 : 1;
+      s.cur.talk = shuffle(this.active().map(function (p) { return p.pid; }));
+      s.cur.step = 'talk';
+      s.ready = {};
+      delete s.cur.a;
+    }
+    if (item.g === 'punchline') delete s.cur.a;
+    if (item.g === 'petitbac') {
+      var cats = shuffle(((this.o.bank.petitbac_cats) || ['Pays', 'Prénom', 'Animal', 'Métier', 'Fruit ou légume']).slice()).slice(0, 5);
+      s.cur.l = q.l;
+      s.cur.cats = cats;
+      s.cur.step = 'write';
+      s.checked = {};
+      s.bacRej = {};
+      delete s.cur.a;
+    }
+    if (item.g === 'reflexe') {
+      // délai avant le signal, mesuré par chaque téléphone : la connexion ne change rien
+      s.cur.wait = 2000 + Math.floor(Math.random() * 4000);
+      delete s.cur.a;
+    }
+    if (item.g === 'memoire') {
+      var grid = shuffle(MEMO_POOL.slice()).slice(0, 9);
+      var target = Math.floor(Math.random() * 9);
+      s.cur.grid = grid;
+      s.cur.target = grid[target];
+      s.cur.ans = target;
+      s.cur.step = 'show';
+      time = this.dur('memoire', 'showTime');
+      s.cur.deadline = now + time;
+      s.cur.time = time;
+      delete s.cur.a;
+    }
+    if (item.g === 'geo') {
+      s.cur.q = q.a;
+      s.cur.k = q.k;
+      s.cur.c2 = q.c;
+    }
+    if (item.g === 'chrono') {
+      s.cur.n = q.n;
+      delete s.cur.a;
+    }
     s.answers = {};
     s.reject = {};
     s.options = null;
@@ -640,9 +835,61 @@
   };
 
   Engine.prototype.onDeadline = function () {
-    var s = this.s;
-    if (s.phase === 'question' && s.cur && s.cur.g === 'pyramide' && s.cur.step === 'announce') return this.startPlay(3);
+    var s = this.s, cur = s.cur;
+    if (s.phase === 'question' && cur) {
+      if (cur.g === 'pyramide' && cur.step === 'announce') return this.startPlay(3);
+      if (cur.g === 'imposteur' && cur.step === 'talk') return this.nextStep('vote', 'voteTime');
+      if (cur.g === 'petitbac' && cur.step === 'write') return this.startBacCheck();
+      if (cur.g === 'memoire' && cur.step === 'show') return this.nextStep('ask', 'time');
+    }
     this.closeQuestion();
+  };
+
+  // Étape suivante d'une épreuve en plusieurs temps (avec son propre chrono).
+  Engine.prototype.nextStep = function (step, key) {
+    var s = this.s, cur = s.cur, now = this.now(), time = this.dur(cur.g, key);
+    cur.step = step;
+    cur.time = time;
+    cur.deadline = now + time;
+    cur.stepAt = now;
+    if (cur.g === 'imposteur') s.answers = {};
+    this.schedule(time, this.onDeadline);
+    this.publish();
+  };
+
+  // ---------- Petit Bac : vérification croisée ----------
+  Engine.prototype.startBacCheck = function () {
+    var s = this.s, cur = s.cur, self = this;
+    // grille publique : chaque réponse, validée automatiquement sur la lettre
+    cur.sheet = {};
+    Object.keys(s.answers).forEach(function (pid) {
+      if (!self.player(pid)) return;
+      cur.sheet[pid] = (s.answers[pid].w || []).map(function (w) {
+        w = String(w || '').replace(/\s+/g, ' ').trim().slice(0, 30);
+        return { w: w, ok: w.length >= 2 && firstLetter(w) === cur.l.toLowerCase() };
+      });
+    });
+    s.checked = {};
+    s.bacRej = {};
+    var any = Object.keys(cur.sheet).some(function (pid) { return cur.sheet[pid].some(function (x) { return x.ok; }); });
+    if (!any) return this.closeQuestion();
+    this.nextStep('check', 'checkTime');
+  };
+
+  Engine.prototype.bac = function (m) {
+    var s = this.s, cur = s.cur;
+    if (s.phase !== 'question' || !cur || cur.g !== 'petitbac' || cur.step !== 'check' || m.round !== s.round) return;
+    if (!this.player(m.pid)) return;
+    if (m.done) {
+      s.checked[m.pid] = true;
+      if (!this.checkDone()) this.publish(false);
+      return;
+    }
+    var key = String(m.key || ''), parts = key.split(':');
+    if (parts[0] === m.pid || !cur.sheet[parts[0]] || !cur.sheet[parts[0]][Number(parts[1])]) return;
+    var r = s.bacRej[key] || (s.bacRej[key] = {});
+    if (r[m.pid]) delete r[m.pid]; else r[m.pid] = true;
+    this.publish(false);
   };
 
   // ---------- Pyramide ----------
@@ -673,16 +920,25 @@
     this.closeQuestion();
   };
 
-  // ---------- Croquis ----------
+  // ---------- L'Imposteur : « on passe au vote » ----------
+  Engine.prototype.ready = function (m) {
+    var s = this.s, cur = s.cur;
+    if (s.phase !== 'question' || !cur || cur.g !== 'imposteur' || cur.step !== 'talk' || m.round !== s.round) return;
+    if (!this.player(m.pid)) return;
+    s.ready[m.pid] = true;
+    if (!this.checkDone()) this.publish(false);
+  };
+
+  // ---------- Croquis et Rébus : propositions ----------
   Engine.prototype.guess = function (m) {
     var s = this.s, cur = s.cur;
-    if (s.phase !== 'question' || !cur || cur.g !== 'croquis' || m.round !== s.round) return;
-    if (!this.player(m.pid) || m.pid === cur.drawer) return;
+    if (s.phase !== 'question' || !cur || (cur.g !== 'croquis' && cur.g !== 'rebus') || m.round !== s.round) return;
+    if (!this.player(m.pid) || (cur.g === 'croquis' && m.pid === cur.drawer)) return;
     if (cur.found.some(function (f) { return f.pid === m.pid; })) return;
-    var text = String(m.text == null ? '' : m.text).replace(/\s+/g, ' ').trim().slice(0, 30);
+    var text = String(m.text == null ? '' : m.text).replace(/\s+/g, ' ').trim().slice(0, 40);
     if (!normText(text)) return;
     var words = [cur.a].concat(cur.alt || []);
-    var ok = matchGuess(text, words, knownWords(this.o.bank));
+    var ok = cur.g === 'rebus' ? matchGuess(text, words, null) : matchGuess(text, words, knownWords(this.o.bank));
     var prev = s.fb[m.pid] ? s.fb[m.pid].n : 0;
     if (ok) {
       cur.found.push({ pid: m.pid, t: this.now() - cur.startedAt });
@@ -701,7 +957,7 @@
     var s = this.s;
     if (s.phase !== 'question') return;
     this.cancel();
-    if (s.cur.g === 'bluff') return this.startVote();
+    if (s.cur.g === 'bluff' || s.cur.g === 'punchline') return this.startVote();
     var mult = s.mult || 1;
     var res = {}, answers = s.answers, cur = s.cur;
     s.players.forEach(function (p) { res[p.pid] = { v: null, pts: 0 }; });
@@ -739,6 +995,79 @@
         for (var i = 0; i < cur.order.length; i++) if (v[i] === cur.order[i]) good++;
         res[pid] = { v: v, good: good, pts: (good * 5 + (good === cur.order.length ? 10 : 0)) * mult };
       });
+    } else if (cur.g === 'rebus') {
+      cur.found.forEach(function (f, i) {
+        if (res[f.pid]) res[f.pid] = { found: true, rank: i, pts: ([30, 20][i] || 10) * mult };
+      });
+    } else if (cur.g === 'imposteur') {
+      var tally = {}, max = 0;
+      Object.keys(answers).forEach(function (pid) { var t = answers[pid].v; tally[t] = (tally[t] || 0) + 1; if (tally[t] > max) max = tally[t]; });
+      var tops = Object.keys(tally).filter(function (pid) { return tally[pid] === max; });
+      var caught = max > 0 && tops.length === 1 && tops[0] === cur.imp;
+      cur.caught = caught;
+      cur.tally = tally;
+      s.players.forEach(function (p) {
+        var vote = answers[p.pid] ? answers[p.pid].v : null, imp = p.pid === cur.imp, ok = vote === cur.imp;
+        var pts = imp ? (caught ? 0 : 30) : caught ? (ok ? 30 : 10) : (ok ? 10 : 0);
+        res[p.pid] = { role: imp ? 'imp' : 'civ', vote: vote, ok: ok, caught: caught, pts: pts * mult };
+      });
+    } else if (cur.g === 'petitbac') {
+      var sheet = cur.sheet || {}, act = this.active(), rej = s.bacRej || {};
+      var valid = {};
+      Object.keys(sheet).forEach(function (pid) {
+        var others = act.filter(function (p) { return p.pid !== pid; }).length;
+        var need = Math.max(1, Math.ceil(others / 2));
+        valid[pid] = sheet[pid].map(function (x, i) {
+          var nRej = Object.keys(rej[pid + ':' + i] || {}).length;
+          return x.ok && x.w && nRej < need;
+        });
+      });
+      Object.keys(sheet).forEach(function (pid) {
+        if (!res[pid]) return;
+        var total = 0, uniq = 0;
+        var marks = sheet[pid].map(function (x, i) {
+          if (!valid[pid][i]) return { w: x.w, st: x.w ? (x.ok ? 'rej' : 'bad') : 'empty', pts: 0 };
+          var shared = Object.keys(sheet).some(function (o) { return o !== pid && valid[o][i] && similar(sheet[o][i].w, x.w); });
+          var pts = shared ? BAC_POINTS.shared : BAC_POINTS.unique;
+          if (!shared) uniq++;
+          total += pts;
+          return { w: x.w, st: shared ? 'shared' : 'unique', pts: pts * mult };
+        });
+        res[pid] = { marks: marks, uniq: uniq, pts: total * mult };
+      });
+    } else if (cur.g === 'reflexe') {
+      var okR = Object.keys(answers).filter(function (pid) { return res[pid] && answers[pid].v >= 0; });
+      okR.sort(function (a, b) { return answers[a].v - answers[b].v; });
+      Object.keys(answers).forEach(function (pid) {
+        if (!res[pid]) return;
+        var rk = okR.indexOf(pid), v = answers[pid].v;
+        res[pid] = { v: v, early: v < 0, rank: rk, pts: rk < 0 ? 0 : ([30, 20, 10][rk] || 5) * mult };
+      });
+    } else if (cur.g === 'chrono') {
+      var target = cur.n * 1000;
+      var rowsC = Object.keys(answers).filter(function (pid) { return res[pid]; }).map(function (pid) {
+        return { pid: pid, v: answers[pid].v, diff: Math.abs(answers[pid].v - target) };
+      });
+      rowsC.sort(function (a, b) { return a.diff - b.diff; });
+      rowsC.forEach(function (r, i) {
+        r.rank = (i > 0 && r.diff === rowsC[i - 1].diff) ? rowsC[i - 1].rank : i;
+        res[r.pid] = { v: r.v, diff: r.diff, rank: r.rank, pts: (EST_POINTS[r.rank] || 0) * mult };
+      });
+    } else if (cur.g === 'memoire') {
+      var goodM = Object.keys(answers).filter(function (pid) { return answers[pid].v === cur.ans; });
+      goodM.sort(function (a, b) { return answers[a].t - answers[b].t; });
+      Object.keys(answers).forEach(function (pid) {
+        if (!res[pid]) return;
+        var ok = answers[pid].v === cur.ans;
+        res[pid] = { v: answers[pid].v, ok: ok, fast: ok && pid === goodM[0], pts: ok ? (20 + (pid === goodM[0] ? 10 : 0)) * mult : 0 };
+      });
+    } else if (cur.g === 'geo') {
+      var geo = this.o.geo || (typeof GEO !== 'undefined' ? GEO : null);
+      Object.keys(answers).forEach(function (pid) {
+        if (!res[pid]) return;
+        var v = answers[pid].v, km = geo ? geoDistance(geo, cur.k, v[0], v[1]) : 99999;
+        res[pid] = { v: v, km: km, inside: km === 0, pts: geoPoints(km) * mult };
+      });
     }
 
     this.finish(res);
@@ -759,13 +1088,22 @@
       if (cur.g === 'croquis' && r.role === 'drawer') st.drawn += r.finders || 0;
       if (cur.g === 'croquis' && r.found) st.guessed++;
       if (cur.g === 'pyramide' && r.role === 'giver' && cur.n === 1) st.kamikaze++;
+      if (cur.g === 'punchline') st.laughs += r.votes || 0;
+      if (cur.g === 'imposteur' && r.role === 'imp' && !r.caught) st.spy++;
+      if (cur.g === 'imposteur' && r.role === 'civ' && r.ok) st.detect++;
+      if (cur.g === 'rebus' && r.found) st.rebus++;
+      if (cur.g === 'petitbac') st.bac += r.uniq || 0;
+      if (cur.g === 'reflexe' && r.rank === 0) st.reflex++;
+      if (cur.g === 'chrono' && r.v != null && r.rank === 0) st.clock++;
+      if (cur.g === 'memoire' && r.ok) st.memo++;
+      if (cur.g === 'geo' && r.v) st.geo += r.pts || 0;
     });
     s.result = res;
     s.phase = 'reveal';
     this.publish();
   };
 
-  function newStats() { return { byGame: {}, fast: 0, estWin: 0, fooled: 0, ordre: 0, drawn: 0, guessed: 0, kamikaze: 0 }; }
+  function newStats() { return { byGame: {}, fast: 0, estWin: 0, fooled: 0, ordre: 0, drawn: 0, guessed: 0, kamikaze: 0, laughs: 0, spy: 0, detect: 0, rebus: 0, bac: 0, reflex: 0, clock: 0, memo: 0, geo: 0 }; }
 
   var TITLES = [
     { k: 'fooled', name: 'Le Mytho', why: 'a piégé le plus de monde au Bluff' },
@@ -774,7 +1112,16 @@
     { k: 'kamikaze', name: 'Le Kamikaze', why: 'a tenté « 1 indice » le plus souvent' },
     { k: 'fast', name: 'L\'Éclair', why: 'le plus rapide en Culture G' },
     { k: 'ordre', name: 'L\'Historien', why: 'le meilleur à Dans l\'ordre' },
-    { k: 'guessed', name: 'Le Devin', why: 'a deviné le plus de croquis' }
+    { k: 'guessed', name: 'Le Devin', why: 'a deviné le plus de croquis' },
+    { k: 'laughs', name: 'Le Comique', why: 'ses punchlines ont fait le plus rire' },
+    { k: 'spy', name: 'L\'Agent double', why: 'imposteur jamais démasqué' },
+    { k: 'detect', name: 'Le Détective', why: 'a démasqué le plus d\'imposteurs' },
+    { k: 'rebus', name: 'Le Décodeur', why: 'a résolu le plus de rébus' },
+    { k: 'bac', name: 'Le Dico', why: 'le plus de mots uniques au Petit Bac' },
+    { k: 'reflex', name: 'Le Ninja', why: 'les meilleurs réflexes' },
+    { k: 'clock', name: 'L\'Horloge suisse', why: 'le plus précis à Pile-poil' },
+    { k: 'memo', name: 'Mémoire d\'éléphant', why: 'n\'oublie rien' },
+    { k: 'geo', name: 'Le Globe-trotteur', why: 'le meilleur sur la carte du monde' }
   ];
 
   // Chaque joueur repart avec au moins un titre.
@@ -806,7 +1153,7 @@
   // ---------- Le Bluff : vote ----------
   Engine.prototype.startVote = function () {
     var s = this.s, now = this.now(), self = this;
-    var opts = [{ text: s.cur.a, by: null }];
+    var opts = s.cur.g === 'punchline' ? [] : [{ text: s.cur.a, by: null }];
     Object.keys(s.answers).forEach(function (pid) {
       if (self.player(pid)) opts.push({ text: tidy(s.answers[pid].v), by: pid });
     });
@@ -814,7 +1161,7 @@
     s.votes = {};
     s.reject = {};
     if (opts.length < 2) return this.closeVote();
-    var time = this.dur('bluff', 'voteTime');
+    var time = this.dur(s.cur.g, 'voteTime');
     s.cur.deadline = now + time;
     s.cur.time = time;
     s.phase = 'vote';
@@ -838,6 +1185,22 @@
     this.cancel();
     var mult = s.mult || 1, res = {}, byId = {};
     (s.options || []).forEach(function (o) { byId[o.id] = o; });
+    if (s.cur.g === 'punchline') {
+      // chaque vote reçu rapporte 10 points (30 au plus)
+      s.players.forEach(function (p) { res[p.pid] = { pts: 0, votes: 0, voted: s.votes[p.pid] || null, line: s.answers[p.pid] ? tidy(s.answers[p.pid].v) : null }; });
+      Object.keys(s.votes).forEach(function (pid) {
+        var o = byId[s.votes[pid]];
+        if (o && o.by && res[o.by]) res[o.by].votes++;
+      });
+      var best = 0;
+      Object.keys(res).forEach(function (pid) { if (res[pid].votes > best) best = res[pid].votes; });
+      Object.keys(res).forEach(function (pid) {
+        var r = res[pid];
+        r.top = best > 0 && r.votes === best;
+        r.pts = Math.min(30, r.votes * 10) * mult;
+      });
+      return this.finish(res);
+    }
     s.players.forEach(function (p) { res[p.pid] = { pts: 0, found: false, voted: s.votes[p.pid] || null, fooled: 0, lie: s.answers[p.pid] ? s.answers[p.pid].v : null }; });
     Object.keys(s.votes).forEach(function (pid) {
       var o = byId[s.votes[pid]];
@@ -852,7 +1215,7 @@
     this.finish(res);
   };
 
-  var api = { sanitizeSettings: sanitizeSettings, computeTitles: computeTitles, countsFor: countsFor, nearMiss: nearMiss, Engine: Engine, GAMES: GAMES, newState: newState, publicView: publicView, buildDeck: buildDeck, buildOrder: buildOrder, similar: similar, matchGuess: matchGuess, knownWords: knownWords, normText: normText, containsTruth: containsTruth };
+  var api = { sanitizeSettings: sanitizeSettings, computeTitles: computeTitles, countsFor: countsFor, nearMiss: nearMiss, Engine: Engine, GAMES: GAMES, newState: newState, publicView: publicView, buildDeck: buildDeck, buildOrder: buildOrder, fixFinale: fixFinale, geoDistance: geoDistance, firstLetter: firstLetter, similar: similar, matchGuess: matchGuess, knownWords: knownWords, normText: normText, containsTruth: containsTruth };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.SCEngine = api;
 })(this);
