@@ -1,0 +1,657 @@
+// Soirée Canapé — interface (télé + téléphones) et synchronisation Supabase.
+(function () {
+  'use strict';
+
+  var SB_URL = 'https://qsyrrcrknxdkdsxkoooa.supabase.co';
+  var SB_KEY = 'sb_publishable_whJtaOQEsL6Q1YqsxtLU5w_mLhX3Ocz';
+  var COLORS = ['#FFC93C', '#FF7A6B', '#5AA2FF', '#3FD49A', '#FF8FD0', '#F5F3FF'];
+  var COLOR_NAMES = ['Jaune', 'Corail', 'Bleu', 'Vert', 'Rose', 'Blanc'];
+  var LETTERS = ['A', 'B', 'C', 'D'];
+  var CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+  var GAMES = SCEngine.GAMES;
+  var STALE_MS = 12 * 3600 * 1000;
+
+  var app = document.getElementById('app');
+  var netEl = document.getElementById('net');
+  var sb = supabase.createClient(SB_URL, SB_KEY, { auth: { persistSession: false } });
+
+  // ---------- utilitaires ----------
+  function lsGet(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } }
+  function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+  function lsDel(k) { try { localStorage.removeItem(k); } catch (e) {} }
+  function uid() { return Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4); }
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function fmt(n) { try { return Number(n).toLocaleString('fr-FR'); } catch (e) { return String(n); } }
+  function ord(n) { return n === 1 ? '1ᵉʳ' : n + 'ᵉ'; }
+  function $(id) { return document.getElementById(id); }
+  function on(id, ev, fn) { var el = $(id); if (el) el.addEventListener(ev, fn); }
+
+  var me = lsGet('sc_me');
+  if (!me || !me.pid) { me = { pid: uid(), name: '', color: null }; lsSet('sc_me', me); }
+
+  var C = {
+    code: null, tv: false, engine: null, ch: null, ready: false, queue: [],
+    S: null, endAt: 0, view: '', myRound: -1, myAns: null, gotFresh: false,
+    helloTimer: null, editing: false, pick: null, lock: null
+  };
+
+  // ---------- démarrage ----------
+  function init() {
+    var params = new URLSearchParams(location.search);
+    var r = (params.get('r') || '').toUpperCase().replace(/[^A-Z]/g, '');
+    var sess = lsGet('sc_sess');
+    if (params.has('tv')) {
+      if (sess && sess.tv) return resume(sess, function () { createRoom(true); });
+      return createRoom(true);
+    }
+    if (r.length === 4) {
+      if (sess && sess.code === r && !sess.tv) return resume(sess, function () { openJoin(r); });
+      return openJoin(r);
+    }
+    if (sess && !sess.tv) return resume(sess, showHome);
+    showHome();
+  }
+
+  function fetchRoom(code) {
+    return sb.from('rooms').select('state, updated_at').eq('code', code).maybeSingle();
+  }
+
+  function resume(sess, fallback) {
+    boot('Reconnexion…');
+    fetchRoom(sess.code).then(function (r) {
+      var row = r.data;
+      if (r.error || !row || Date.now() - Date.parse(row.updated_at) > STALE_MS) {
+        lsDel('sc_sess');
+        return fallback();
+      }
+      start(sess, row.state);
+    });
+  }
+
+  function openJoin(code) {
+    boot('Recherche de la partie…');
+    fetchRoom(code).then(function (r) {
+      if (r.error || !r.data) return showError('Partie « ' + code + ' » introuvable. Vérifie le code.');
+      start({ code: code, tv: false, engine: false }, r.data.state);
+    });
+  }
+
+  function createRoom(asTv) {
+    boot('Création de la partie…');
+    var tries = 0;
+    (function attempt() {
+      var code = '';
+      for (var i = 0; i < 4; i++) code += CODE_CHARS.charAt(Math.floor(Math.random() * CODE_CHARS.length));
+      var st = SCEngine.newState(code, asTv);
+      sb.from('rooms').insert({ code: code, state: st }).then(function (r) {
+        if (r.error) {
+          if (++tries < 5) return attempt();
+          return showError('Impossible de créer la partie (' + r.error.message + ').');
+        }
+        var sess = { code: code, tv: asTv, engine: true };
+        lsSet('sc_sess', sess);
+        start(sess, st);
+      });
+    })();
+  }
+
+  function start(sess, state) {
+    C.code = sess.code;
+    C.tv = !!sess.tv;
+    document.body.className = C.tv ? 'tv' : 'phone';
+    if (C.tv) { sizeTv(); window.addEventListener('resize', sizeTv); }
+    try { history.replaceState(null, '', C.tv ? '?tv' : '?r=' + sess.code); } catch (e) {}
+    if (sess.engine) C.engine = makeEngine(sess.code, state, sess.tv);
+    connect();
+    if (C.engine) C.engine.publish(false);
+    else if (state) {
+      var rem = 0;
+      if (state.phase === 'question' && state.cur) rem = state.cur.deadline - Date.now();
+      if (state.phase === 'draw') rem = state.drawUntil - Date.now();
+      onState({ s: SCEngine.publicView(state), rem: Math.max(0, rem) });
+    }
+  }
+
+  function makeEngine(code, state, hasTv) {
+    var played = {}, persistT = null;
+    sb.from('played').select('qid').then(function (r) {
+      (r.data || []).forEach(function (x) { played[x.qid] = true; });
+    });
+    return new SCEngine.Engine({
+      code: code, hasTv: hasTv, state: state, bank: QUESTIONS,
+      broadcast: function (view, rem) {
+        chSend('s', { s: view, rem: rem });
+        onState({ s: view, rem: rem });
+      },
+      persist: function (st) {
+        clearTimeout(persistT);
+        persistT = setTimeout(function () {
+          sb.from('rooms').upsert({ code: code, state: st, updated_at: new Date().toISOString() })
+            .then(function (r) { if (r.error) console.warn('persist', r.error); });
+        }, 250);
+      },
+      markPlayed: function (id) {
+        played[id] = true;
+        sb.from('played').upsert({ qid: id }, { ignoreDuplicates: true }).then(function () {});
+      },
+      getPlayed: function () { return played; }
+    });
+  }
+
+  // ---------- temps réel ----------
+  function connect() {
+    var ch = sb.channel('sc-' + C.code, { config: { broadcast: { self: false } } });
+    C.ch = ch;
+    if (C.engine) ch.on('broadcast', { event: 'p' }, function (m) { C.engine.handle(m.payload); });
+    else ch.on('broadcast', { event: 's' }, function (m) { onState(m.payload); });
+    ch.subscribe(function (status) {
+      if (status === 'SUBSCRIBED') {
+        C.ready = true;
+        netEl.hidden = true;
+        while (C.queue.length) ch.send({ type: 'broadcast', event: 'p', payload: C.queue.shift() });
+        if (C.engine) C.engine.publish(false);
+        else hello();
+      } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+        C.ready = false;
+        netEl.hidden = false;
+      }
+    });
+  }
+
+  function chSend(ev, payload) {
+    if (!C.ch) return;
+    if (!C.ready) { if (ev === 'p') C.queue.push(payload); return; }
+    C.ch.send({ type: 'broadcast', event: ev, payload: payload });
+  }
+
+  function send(msg) {
+    msg.pid = me.pid;
+    if (C.engine) C.engine.handle(msg);
+    else chSend('p', msg);
+  }
+
+  function hello() {
+    C.gotFresh = false;
+    send({ t: 'hello' });
+    clearInterval(C.helloTimer);
+    C.helloTimer = setInterval(function () {
+      if (C.gotFresh) clearInterval(C.helloTimer);
+      else send({ t: 'hello' });
+    }, 3000);
+  }
+
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState !== 'visible' || !C.code) return;
+    keepAwake();
+    if (C.engine) C.engine.publish(false);
+    else if (C.ready) hello();
+  });
+
+  function keepAwake() {
+    if (!('wakeLock' in navigator) || (C.lock && !C.lock.released)) return;
+    navigator.wakeLock.request('screen').then(function (l) { C.lock = l; }).catch(function () {});
+  }
+  document.addEventListener('pointerdown', keepAwake);
+
+  function onState(p) {
+    if (!p || !p.s) return;
+    var S = p.s;
+    C.S = S;
+    C.endAt = Date.now() + (p.rem || 0);
+    C.gotFresh = true;
+    if (S.round !== C.myRound) { C.myRound = S.round; C.myAns = null; }
+    render();
+  }
+
+  // ---------- chrono ----------
+  setInterval(function () {
+    if (!C.S) return;
+    var left = Math.max(0, C.endAt - Date.now());
+    var total = (C.S.cur && C.S.cur.time) || 1;
+    var i, els = document.querySelectorAll('[data-sec]');
+    for (i = 0; i < els.length; i++) els[i].textContent = Math.ceil(left / 1000);
+    els = document.querySelectorAll('[data-bar]');
+    for (i = 0; i < els.length; i++) els[i].style.width = Math.min(100, left / total * 100) + '%';
+    els = document.querySelectorAll('[data-ring]');
+    for (i = 0; i < els.length; i++) els[i].style.setProperty('--p', Math.min(1, left / total));
+  }, 200);
+
+  // ---------- rendu ----------
+  function boot(msg) { C.view = ''; app.innerHTML = '<div class="boot"><div style="text-align:center">Soirée Canapé<div class="muted" style="font-size:16px;font-family:var(--body);font-weight:500;margin-top:10px">' + esc(msg) + '</div></div></div>'; }
+
+  function setView(key, html) {
+    if (C.view === key) return false;
+    C.view = key;
+    app.innerHTML = html;
+    window.scrollTo(0, 0);
+    return true;
+  }
+
+  function render() {
+    if (!C.S) return;
+    if (C.tv) renderTv(); else renderPhone();
+  }
+
+  function findP(pid) {
+    var ps = C.S.players;
+    for (var i = 0; i < ps.length; i++) if (ps[i].pid === pid) return ps[i];
+    return null;
+  }
+  function capName() { var p = findP(C.S.captain); return p ? p.name : 'le capitaine'; }
+  function ranked() { return C.S.players.slice().sort(function (a, b) { return b.score - a.score; }); }
+  function initial(p) { return esc((p.name || '?').charAt(0).toUpperCase()); }
+  function av(p, px) {
+    return '<span class="av" style="width:' + px + 'px;height:' + px + 'px;font-size:' + Math.round(px * 0.45) + 'px;background:' + COLORS[p.color] + '">' + initial(p) + '</span>';
+  }
+  function avR(p, rem, ghost) {
+    return '<span class="av' + (ghost ? ' ghost' : '') + '" style="width:' + rem + 'rem;height:' + rem + 'rem;font-size:' + (rem * 0.45) + 'rem;background:' + COLORS[p.color] + '">' + initial(p) + '</span>';
+  }
+  function answeredSet() {
+    var o = {};
+    (C.S.answered || []).forEach(function (pid) { o[pid] = true; });
+    return o;
+  }
+  function gameName(g) { return GAMES[g] ? GAMES[g].name : g; }
+  function joinUrl() { return location.origin + location.pathname + '?r=' + C.code; }
+  function qrSvg(text) {
+    var q = qrcode(0, 'M');
+    q.addData(text);
+    q.make();
+    return q.createSvgTag({ cellSize: 4, margin: 0, scalable: true });
+  }
+
+  // ================= TÉLÉPHONE =================
+  function renderPhone() {
+    var S = C.S, p = findP(me.pid);
+    if (!p || C.editing) return phoneJoin();
+    if (S.phase === 'lobby') return phoneLobby();
+    if (S.phase === 'draw') return phoneDraw();
+    if (S.phase === 'question') return phoneQuestion();
+    if (S.phase === 'reveal') return phoneReveal();
+    if (S.phase === 'final') return phoneFinal();
+  }
+
+  function topbar() {
+    var p = findP(me.pid);
+    if (!p) return '';
+    return '<div class="topbar">' + av(p, 40) + '<span class="name">' + esc(p.name) + '</span><span class="pts">' + p.score + ' pts</span></div>';
+  }
+
+  function takenColors() {
+    var t = {};
+    C.S.players.forEach(function (p) { if (p.pid !== me.pid) t[p.color] = p.name; });
+    return t;
+  }
+
+  function phoneJoin() {
+    var taken = takenColors();
+    if (C.pick == null || taken[C.pick] !== undefined) {
+      C.pick = (me.color != null && taken[me.color] === undefined) ? me.color : null;
+      for (var c = 0; C.pick == null && c < COLORS.length; c++) if (taken[c] === undefined) C.pick = c;
+    }
+    var full = C.S.players.length >= 6 && !findP(me.pid);
+    var fresh = setView('join', '<div class="ph">' +
+      '<div><h1 class="title">Soirée Canapé</h1><div class="muted">Partie <b>' + esc(C.code) + '</b></div></div>' +
+      '<div class="stack"><label class="label" for="nm">Ton prénom</label><input id="nm" class="input" maxlength="14" autocomplete="off" value="' + esc(me.name) + '"></div>' +
+      '<div class="stack"><span class="label">Ta couleur</span><div class="colors" id="cols"></div></div>' +
+      '<div class="grow"></div>' +
+      '<div class="note" id="full"' + (full ? '' : ' hidden') + '>La partie est complète (6 joueurs).</div>' +
+      '<button class="btn" id="go"' + (full ? ' disabled' : '') + '>' + (C.editing ? 'Valider' : 'Rejoindre') + '</button>' +
+      '<button class="linkbtn" id="back">' + (C.editing ? 'Annuler' : 'Retour à l\'accueil') + '</button>' +
+      '</div>');
+    // couleurs : mises à jour sans effacer le prénom en cours de saisie
+    var html = '';
+    COLORS.forEach(function (hex, i) {
+      var t = taken[i] !== undefined;
+      html += '<button type="button" data-c="' + i + '" class="' + (C.pick === i ? 'sel' : '') + '" style="background:' + hex + '"' +
+        (t ? ' disabled aria-label="' + COLOR_NAMES[i] + ', pris par ' + esc(taken[i]) + '"' : ' aria-label="' + COLOR_NAMES[i] + '"') + '></button>';
+    });
+    $('cols').innerHTML = html;
+    $('full').hidden = !full;
+    $('go').disabled = full;
+    if (!fresh) return;
+    $('cols').addEventListener('click', function (e) {
+      var b = e.target.closest ? e.target.closest('button') : e.target;
+      if (!b || b.disabled || b.getAttribute('data-c') == null) return;
+      C.pick = Number(b.getAttribute('data-c'));
+      var bs = $('cols').querySelectorAll('button');
+      for (var i = 0; i < bs.length; i++) bs[i].className = Number(bs[i].getAttribute('data-c')) === C.pick ? 'sel' : '';
+    });
+    on('go', 'click', function () {
+      var name = $('nm').value.replace(/\s+/g, ' ').trim();
+      if (!name) { $('nm').focus(); return; }
+      me.name = name.slice(0, 14);
+      me.color = C.pick;
+      lsSet('sc_me', me);
+      lsSet('sc_sess', { code: C.code, tv: false, engine: !!C.engine });
+      C.editing = false;
+      C.view = '';
+      send({ t: 'join', name: me.name, color: me.color });
+      keepAwake();
+    });
+    on('back', 'click', function () {
+      if (C.editing) { C.editing = false; C.view = ''; render(); return; }
+      leave();
+    });
+  }
+
+  function leave() {
+    if (C.engine && !C.S.hasTv && C.S.players.length > 1 &&
+        !window.confirm('Cette partie tourne sur ton téléphone : si tu quittes, elle s\'arrête pour tout le monde. Quitter ?')) return;
+    send({ t: 'leave' });
+    lsDel('sc_sess');
+    setTimeout(function () { location.href = location.pathname; }, 300);
+  }
+
+  function phoneLobby() {
+    var S = C.S, cap = S.captain === me.pid, st = S.settings;
+    var key = 'lobby|' + JSON.stringify([S.players, S.captain, st]);
+    var rows = S.players.map(function (p) {
+      var tags = [];
+      if (p.pid === S.captain) tags.push('capitaine');
+      if (p.pid === me.pid) tags.push('toi');
+      return '<div class="prow">' + av(p, 40) + '<span class="n">' + esc(p.name) + '</span><span class="muted" style="font-size:14px">' + tags.join(' · ') + '</span></div>';
+    }).join('');
+    var qr = '';
+    if (!S.hasTv && C.engine) {
+      qr = '<div class="card stack" style="align-items:center;text-align:center"><span class="label">Faites scanner ce code aux autres joueurs</span>' +
+        '<div class="qrbox">' + qrSvg(joinUrl()) + '</div><div class="display" style="font-size:30px;letter-spacing:.3em">' + esc(C.code) + '</div></div>';
+    }
+    var settings = '';
+    if (cap) {
+      var seg = [10, 15, 25].map(function (n) { return '<button type="button" data-n="' + n + '" class="' + (st.count === n ? 'on' : '') + '">' + n + '</button>'; }).join('');
+      var games = Object.keys(GAMES).map(function (g) {
+        return '<label class="check"><input type="checkbox" data-g="' + g + '"' + (st.games.indexOf(g) >= 0 ? ' checked' : '') + '>' + esc(GAMES[g].name) + '</label>';
+      }).join('');
+      settings = '<div class="card stack"><span class="label">Nombre d\'épreuves</span><div class="seg" id="seg">' + seg + '</div>' +
+        '<span class="label" style="margin-top:6px">Jeux</span><div class="stack" id="games">' + games + '</div>' +
+        '<span class="label" style="margin-top:6px">Options</span><label class="check"><input type="checkbox" id="fin"' + (st.finale ? ' checked' : '') + '>Finale à points doubles</label></div>' +
+        '<button class="btn" id="start">Lancer la partie</button>';
+    } else {
+      settings = '<div class="note">C\'est ' + esc(capName()) + ' qui lance la partie</div>';
+    }
+    if (!setView(key, '<div class="ph">' +
+      '<div><h1 class="title">Soirée Canapé</h1><div class="muted">Partie ' + esc(C.code) + ' · ' + S.players.length + ' joueur' + (S.players.length > 1 ? 's' : '') + '</div></div>' +
+      qr + '<div class="plist">' + rows + '</div>' + settings +
+      '<div class="grow"></div>' +
+      '<button class="linkbtn" id="edit">Changer de prénom ou de couleur</button>' +
+      '<button class="linkbtn" id="quit">Quitter la partie</button></div>')) return;
+
+    function current() {
+      var g = [], boxes = document.querySelectorAll('#games input');
+      for (var i = 0; i < boxes.length; i++) if (boxes[i].checked) g.push(boxes[i].getAttribute('data-g'));
+      return { count: st.count, games: g.length ? g : st.games, finale: $('fin') ? $('fin').checked : st.finale };
+    }
+    on('seg', 'click', function (e) {
+      var n = e.target.getAttribute && e.target.getAttribute('data-n');
+      if (!n) return;
+      var s = current(); s.count = Number(n);
+      send({ t: 'cmd', cmd: 'settings', settings: s });
+    });
+    on('games', 'change', function () { send({ t: 'cmd', cmd: 'settings', settings: current() }); });
+    on('fin', 'change', function () { send({ t: 'cmd', cmd: 'settings', settings: current() }); });
+    on('start', 'click', function () { keepAwake(); send({ t: 'cmd', cmd: 'start', settings: current() }); });
+    on('edit', 'click', function () { C.editing = true; C.view = ''; render(); });
+    on('quit', 'click', leave);
+  }
+
+  function x2chip() { return C.S.mult > 1 ? ' <span class="chip x2">Finale ×2</span>' : ''; }
+
+  function phoneDraw() {
+    var S = C.S, g = S.deck[S.round - 1];
+    setView('draw|' + S.round, '<div class="ph">' + topbar() +
+      '<div class="drawcard"><span class="k">Épreuve ' + S.round + ' / ' + S.deck.length + '</span><span class="g">' + esc(gameName(g)) + '</span>' +
+      (S.mult > 1 ? '<span><span class="chip x2">Finale : points doubles</span></span>' : '') + '</div></div>');
+  }
+
+  function phoneQuestion() {
+    var S = C.S, cur = S.cur, ans = answeredSet();
+    var done = C.myAns != null || ans[me.pid];
+    var key = 'q|' + S.round + '|' + (done ? 1 : 0);
+    var head = topbar() +
+      '<div class="stack" style="gap:8px"><div class="rowx"><span>' + esc(gameName(cur.g)) + ' · ' + S.round + '/' + S.deck.length + (S.mult > 1 ? ' · ×2' : '') + '</span>' +
+      '<b style="color:var(--ink)"><span data-sec></span> s</b></div><div class="bar"><i data-bar></i></div></div>' +
+      '<h2>' + esc(cur.q) + '</h2>';
+    var body = '';
+    if (cur.g === 'culture') {
+      body = '<div class="stack" id="opts">' + cur.c.map(function (t, i) {
+        var cls = 'choice';
+        if (done) cls += (C.myAns === i ? ' sel' : ' dim');
+        return '<button type="button" class="' + cls + '" data-i="' + i + '"' + (done ? ' disabled' : '') + '><span class="letter">' + LETTERS[i] + '</span><span>' + esc(t) + '</span></button>';
+      }).join('') + '</div>';
+    } else if (cur.g === 'estimation') {
+      if (!done) {
+        body = '<div class="stack"><input id="num" class="input big" inputmode="decimal" autocomplete="off" placeholder="Ta réponse">' +
+          (cur.u ? '<div class="muted" style="text-align:center">en ' + esc(cur.u) + '</div>' : '') +
+          '<button class="btn" id="send">Valider</button></div>';
+      } else {
+        body = '<div class="card" style="text-align:center"><div class="label">Ta réponse</div><div class="display" style="font-size:34px;margin-top:6px">' +
+          (C.myAns != null ? esc(fmt(C.myAns)) + (cur.u ? ' <span style="font-size:20px">' + esc(cur.u) + '</span>' : '') : 'envoyée') + '</div></div>';
+      }
+    }
+    var fresh = setView(key, '<div class="ph">' + head + body + '<div class="grow"></div><div class="note" id="stat"></div></div>');
+    var n = (S.answered || []).length;
+    $('stat').textContent = done ? 'Réponse envoyée · ' + n + '/' + S.players.length + ' ont répondu' : 'Réponds avant la fin du chrono';
+    if (!fresh) return;
+    on('opts', 'click', function (e) {
+      var b = e.target.closest ? e.target.closest('button') : null;
+      if (!b || b.disabled) return;
+      C.myAns = Number(b.getAttribute('data-i'));
+      send({ t: 'answer', round: S.round, val: C.myAns });
+      render();
+    });
+    function submit() {
+      var raw = $('num').value.replace(/\s/g, '').replace(',', '.');
+      var v = parseFloat(raw);
+      if (!isFinite(v)) { $('num').focus(); return; }
+      C.myAns = v;
+      send({ t: 'answer', round: S.round, val: v });
+      render();
+    }
+    on('send', 'click', submit);
+    on('num', 'keydown', function (e) { if (e.key === 'Enter') submit(); });
+  }
+
+  function rankingRows(withGain) {
+    var res = C.S.result || {};
+    return '<div class="plist">' + ranked().map(function (p, i) {
+      var g = withGain && res[p.pid] && res[p.pid].pts ? '<span class="g">+' + res[p.pid].pts + '</span>' : '';
+      return '<div class="prow"><span class="muted" style="width:22px;font-weight:700">' + (i + 1) + '</span>' + av(p, 36) +
+        '<span class="n">' + esc(p.name) + (p.pid === me.pid ? ' <span class="muted" style="font-size:14px">(toi)</span>' : '') + '</span>' + g + '<span class="r">' + p.score + '</span></div>';
+    }).join('') + '</div>';
+  }
+
+  function phoneReveal() {
+    var S = C.S, cur = S.cur, r = (S.result || {})[me.pid] || { v: null, pts: 0 };
+    var verdict = '';
+    if (cur.g === 'culture') {
+      var good = cur.c[cur.a];
+      if (r.ok) verdict = '<div class="verdict ok"><span>Bonne réponse !' + (r.fast ? ' Le plus rapide' : '') + '</span><span class="big">+' + r.pts + '</span><span>' + esc(good) + '</span></div>';
+      else verdict = '<div class="verdict ko"><span class="big">' + (r.v == null ? 'Pas de réponse' : 'Raté') + '</span><span class="muted">La bonne réponse</span><span style="font-size:22px;font-weight:700">' + esc(good) + '</span></div>';
+    } else if (cur.g === 'estimation') {
+      var unit = cur.u ? ' ' + esc(cur.u) : '';
+      verdict = '<div class="verdict ' + (r.pts ? 'ok' : 'ko') + '"><span' + (r.pts ? '' : ' class="muted"') + '>Bonne réponse</span><span class="big">' + esc(fmt(cur.a)) + unit + '</span>' +
+        (r.v == null ? '<span>Pas de réponse</span>' : '<span>Toi : ' + esc(fmt(r.v)) + ' · écart ' + esc(fmt(r.diff)) + (r.pts ? ' · +' + r.pts : '') + '</span>') + '</div>';
+    }
+    var last = S.round >= S.deck.length;
+    var ctrl = S.captain === me.pid ?
+      '<button class="btn" id="next">' + (last ? 'Voir le classement final' : 'Épreuve suivante') + '</button>' :
+      '<div class="note">' + esc(capName()) + ' passe à la suite</div>';
+    if (!setView('rev|' + S.round, '<div class="ph">' + topbar() + verdict + rankingRows(true) + '<div class="grow"></div>' + ctrl + '</div>')) return;
+    on('next', 'click', function () { send({ t: 'cmd', cmd: 'next' }); });
+  }
+
+  function phoneFinal() {
+    var S = C.S, rk = ranked(), pos = 1;
+    for (var i = 0; i < rk.length; i++) if (rk[i].pid === me.pid) pos = i + 1;
+    var ctrl = S.captain === me.pid ?
+      '<button class="btn" id="again">Revanche</button><button class="btn ghost" id="lobby">Retour au salon</button>' :
+      '<div class="note">' + esc(capName()) + ' choisit la suite</div>';
+    if (!setView('fin|' + JSON.stringify(S.players), '<div class="ph"><div class="verdict ' + (pos === 1 ? 'ok' : 'ko') + '"><span>Partie terminée</span><span class="big">' +
+      (pos === 1 ? 'Tu gagnes !' : 'Tu termines ' + ord(pos)) + '</span></div>' + rankingRows(false) + '<div class="grow"></div>' + ctrl +
+      '<button class="linkbtn" id="quit">Quitter la partie</button></div>')) return;
+    on('again', 'click', function () { send({ t: 'cmd', cmd: 'rematch' }); });
+    on('lobby', 'click', function () { send({ t: 'cmd', cmd: 'lobby' }); });
+    on('quit', 'click', leave);
+  }
+
+  // ================= TÉLÉ =================
+  function sizeTv() {
+    var fs = Math.min(window.innerWidth / 80, window.innerHeight / 45);
+    document.documentElement.style.fontSize = fs + 'px';
+  }
+
+  function renderTv() {
+    var S = C.S;
+    if (S.phase === 'lobby') return tvLobby();
+    if (S.phase === 'draw') return tvDraw();
+    if (S.phase === 'question') return tvQuestion();
+    if (S.phase === 'reveal') return tvReveal();
+    if (S.phase === 'final') return tvFinal();
+  }
+
+  function tvLobby() {
+    var S = C.S, st = S.settings;
+    var key = 'tlobby|' + JSON.stringify([S.players, S.captain, st]);
+    var rows = S.players.map(function (p) {
+      return '<div class="prow2">' + avR(p, 3.4) + '<span style="flex:1">' + esc(p.name) + '</span>' +
+        (p.pid === S.captain ? '<span class="chip" style="font-size:1rem">capitaine</span>' : '') + '</div>';
+    }).join('');
+    if (S.players.length < 4) rows += '<div class="prow2 empty"><span class="av ghost" style="width:3.4rem;height:3.4rem"></span>En attente des joueurs…</div>';
+    var chips = '<span class="chip">' + st.count + ' épreuves</span>' +
+      st.games.map(function (g) { return '<span class="chip">' + esc(gameName(g)) + '</span>'; }).join('') +
+      (st.finale ? '<span class="chip">Finale ×2</span>' : '');
+    var who = S.captain ? esc(capName()) + ' lance la partie depuis son téléphone' : 'Le premier joueur arrivé lancera la partie';
+    var tiles = C.code.split('').map(function (c) { return '<span>' + c + '</span>'; }).join('');
+    setView(key, '<div class="tvw"><div class="lobby"><div class="l">' +
+      '<div><p class="brand-k">Soirée jeux</p><h1 class="brand">Soirée Canapé</h1></div>' +
+      '<div class="qrrow"><div class="qr">' + qrSvg(joinUrl()) + '</div><div style="display:flex;flex-direction:column;gap:1rem">' +
+      '<div style="font-size:1.7rem;font-weight:600">Scannez avec votre téléphone</div>' +
+      '<div class="muted" style="font-size:1.25rem">ou ouvrez ' + esc(location.host) + ' et entrez le code</div><div class="tiles">' + tiles + '</div></div></div></div>' +
+      '<div class="players"><div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:.4rem"><h2 class="display" style="margin:0;font-size:2.4rem">Joueurs</h2>' +
+      '<span class="muted" style="font-size:1.4rem">' + S.players.length + ' / 6</span></div>' + rows +
+      '<div style="margin-top:auto;display:flex;flex-direction:column;gap:1rem"><div style="display:flex;gap:.6rem;flex-wrap:wrap">' + chips + '</div>' +
+      '<div class="muted" style="font-size:1.25rem">' + who + '</div></div></div></div></div>');
+  }
+
+  function tvBar(withRing) {
+    var S = C.S, cur = S.cur;
+    return '<div class="tbar"><div class="l"><span class="chip accent">' + esc(gameName(cur.g)) + '</span><span class="muted">Épreuve ' + S.round + ' / ' + S.deck.length + '</span>' + x2chip() + '</div>' +
+      (withRing ? '<div class="ring" data-ring><span data-sec></span></div>' : '') + '</div>';
+  }
+
+  function tvDraw() {
+    var S = C.S, g = S.deck[S.round - 1];
+    setView('tdraw|' + S.round, '<div class="tvw"><div class="drawc"><span class="k">Épreuve ' + S.round + ' / ' + S.deck.length + '</span>' +
+      '<span class="g">' + esc(gameName(g)) + '</span>' + (S.mult > 1 ? '<span><span class="chip x2">Finale : points doubles</span></span>' : '') + '</div></div>');
+  }
+
+  function tvWho() {
+    var ans = answeredSet();
+    return '<span class="muted">Ont répondu</span>' + C.S.players.map(function (p) {
+      var ok = ans[p.pid];
+      return '<span class="who-it' + (ok ? '' : ' off') + '">' + avR(p, 2.8, !ok) + esc(p.name) + '</span>';
+    }).join('');
+  }
+
+  function tvQuestion() {
+    var S = C.S, cur = S.cur, body = '';
+    if (cur.g === 'culture') {
+      body = '<div class="grid2">' + cur.c.map(function (t, i) {
+        return '<div class="opt"><span class="letter">' + LETTERS[i] + '</span><span class="t">' + esc(t) + '</span></div>';
+      }).join('') + '</div>';
+    } else if (cur.g === 'estimation') {
+      body = '<div class="muted" style="font-size:1.8rem">Tapez un nombre sur votre téléphone' + (cur.u ? ' — réponse en ' + esc(cur.u) : '') + '</div>';
+    }
+    setView('tq|' + S.round, '<div class="tvw">' + tvBar(true) + '<h1 class="q">' + esc(cur.q) + '</h1>' + body + '<div class="foot" id="who"></div></div>');
+    $('who').innerHTML = tvWho();
+  }
+
+  function tvSide() {
+    var res = C.S.result || {};
+    return '<div class="side"><h3>Classement</h3>' + ranked().map(function (p, i) {
+      var g = res[p.pid] && res[p.pid].pts ? '+' + res[p.pid].pts : '';
+      return '<div class="srow"><span class="muted" style="width:1.6rem">' + (i + 1) + '</span>' + avR(p, 2.6) + '<span class="n">' + esc(p.name) + '</span><span class="g">' + g + '</span><span class="p">' + p.score + '</span></div>';
+    }).join('') + '</div>';
+  }
+
+  function tvReveal() {
+    var S = C.S, cur = S.cur, res = S.result || {}, body = '';
+    if (cur.g === 'culture') {
+      body = '<div class="grid2">' + cur.c.map(function (t, i) {
+        var pickers = S.players.filter(function (p) { return res[p.pid] && res[p.pid].v === i; });
+        return '<div class="opt ' + (i === cur.a ? 'good' : 'bad') + '"><span class="letter">' + LETTERS[i] + '</span><span class="t">' + esc(t) + '</span>' +
+          '<span class="who">' + pickers.map(function (p) { return avR(p, 2.4); }).join('') + '</span></div>';
+      }).join('') + '</div>';
+    } else if (cur.g === 'estimation') {
+      var unit = cur.u ? ' <span style="font-size:2rem">' + esc(cur.u) + '</span>' : '';
+      var rows = S.players.slice().sort(function (a, b) {
+        var ra = res[a.pid], rb = res[b.pid];
+        var da = ra && ra.v != null ? ra.diff : Infinity, db = rb && rb.v != null ? rb.diff : Infinity;
+        return da - db;
+      }).map(function (p) {
+        var r = res[p.pid] || {};
+        return '<div class="erow">' + avR(p, 2.6) + '<span class="n">' + esc(p.name) + '</span><span class="v">' + (r.v == null ? '—' : esc(fmt(r.v))) + '</span>' +
+          '<span class="d">' + (r.v == null ? 'pas de réponse' : (r.exact ? 'pile !' : 'écart ' + esc(fmt(r.diff)))) + '</span><span class="g">' + (r.pts ? '+' + r.pts : '') + '</span></div>';
+      }).join('');
+      body = '<div><div class="muted" style="font-size:1.4rem;margin-bottom:.6rem">Bonne réponse</div><div class="truth">' + esc(fmt(cur.a)) + unit + '</div></div>' +
+        '<div style="display:flex;flex-direction:column;gap:.7rem">' + rows + '</div>';
+    }
+    var next = S.round >= S.deck.length ? 'le classement final' : 'l\'épreuve suivante';
+    setView('trev|' + S.round, '<div class="tvw"><div class="split"><div style="flex:1;display:flex;flex-direction:column;gap:1.6rem;min-width:0">' + tvBar(false) +
+      '<h1 class="q" style="font-size:2.4rem">' + esc(cur.q) + '</h1>' + body +
+      '<div class="foot muted">' + esc(capName()) + ' lance ' + next + ' depuis son téléphone</div></div>' + tvSide() + '</div></div>');
+  }
+
+  function tvFinal() {
+    var S = C.S, rk = ranked(), n = rk.length;
+    var html = '';
+    // révélation à l'envers : du dernier au premier
+    for (var i = n - 1; i >= 0; i--) {
+      var p = rk[i], delay = (n - 1 - i) * 1.6;
+      html += '<div class="pod' + (i === 0 ? ' first' : '') + '" style="animation-delay:' + delay + 's"><span class="rk">' + (i + 1) + '</span>' + avR(p, i === 0 ? 4.4 : 3.2) +
+        '<span class="n">' + esc(p.name) + '</span><span class="s">' + p.score + ' pts</span></div>';
+    }
+    var conf = '', start = n * 1.6;
+    for (var k = 0; k < 40; k++) {
+      conf += '<i style="left:' + (Math.random() * 100).toFixed(1) + '%;background:' + COLORS[k % COLORS.length] + ';animation-delay:' + (start + Math.random() * 3).toFixed(2) + 's"></i>';
+    }
+    setView('tfin|' + JSON.stringify(S.players), '<div class="tvw"><h1 class="display" style="margin:0;font-size:3.4rem;text-align:center">Classement final</h1>' +
+      '<div class="podium">' + html + '</div><div class="muted" style="text-align:center;font-size:1.3rem">' + esc(capName()) + ' choisit : revanche ou retour au salon</div></div>' +
+      '<div class="confetti">' + conf + '</div>');
+  }
+
+  // ================= ACCUEIL =================
+  function showHome() {
+    document.body.className = 'phone';
+    C.view = 'home';
+    app.innerHTML = '<div class="ph"><div style="margin-top:6vh"><h1 class="title" style="font-size:46px">Soirée Canapé</h1><div class="muted" style="margin-top:8px">Le jeu de soirée de la famille</div></div>' +
+      '<div class="grow"></div>' +
+      '<div class="stack"><label class="label" for="code">Rejoindre une partie</label><input id="code" class="input code" maxlength="4" placeholder="CODE" autocomplete="off" autocapitalize="characters">' +
+      '<button class="btn" id="join">Rejoindre</button></div>' +
+      '<div class="stack" style="margin-top:14px"><button class="btn ghost col" id="mk"><span>Créer une partie ici</span><span class="sub">Sans télé : ce téléphone sert de plateau</span></button>' +
+      '<button class="btn ghost col" id="tvb"><span>Ouvrir l\'écran télé</span><span class="sub">À lancer depuis le navigateur de la télé</span></button></div></div>';
+    function go() {
+      var c = $('code').value.toUpperCase().replace(/[^A-Z]/g, '');
+      if (c.length !== 4) { $('code').focus(); return; }
+      openJoin(c);
+    }
+    on('join', 'click', go);
+    on('code', 'keydown', function (e) { if (e.key === 'Enter') go(); });
+    on('mk', 'click', function () { createRoom(false); });
+    on('tvb', 'click', function () { location.href = location.pathname + '?tv'; });
+  }
+
+  function showError(msg) {
+    document.body.className = 'phone';
+    C.view = 'err';
+    app.innerHTML = '<div class="ph"><h1 class="title">Oups</h1><div class="note">' + esc(msg) + '</div><div class="grow"></div><button class="btn" id="home">Retour à l\'accueil</button></div>';
+    on('home', 'click', function () { location.href = location.pathname; });
+  }
+
+  init();
+})();

@@ -1,0 +1,10 @@
+{
+  "name": "Soirée Canapé",
+  "short_name": "Soirée Canapé",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#14121F",
+  "theme_color": "#14121F",
+  "lang": "fr",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}
