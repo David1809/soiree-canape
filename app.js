@@ -4,8 +4,8 @@
 
   var SB_URL = 'https://qsyrrcrknxdkdsxkoooa.supabase.co';
   var SB_KEY = 'sb_publishable_whJtaOQEsL6Q1YqsxtLU5w_mLhX3Ocz';
-  var COLORS = ['#FFC93C', '#FF7A6B', '#5AA2FF', '#3FD49A', '#FF8FD0', '#F5F3FF'];
-  var COLOR_NAMES = ['Jaune', 'Corail', 'Bleu', 'Vert', 'Rose', 'Blanc'];
+  var COLORS = ['#F6C90E', '#E94F37', '#3F88C5', '#44BBA4', '#F28CB8', '#9B7BD4'];
+  var COLOR_NAMES = ['Jaune', 'Rouge', 'Bleu', 'Vert', 'Rose', 'Violet'];
   var LETTERS = ['A', 'B', 'C', 'D'];
   var LETTERS2 = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
   var CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
@@ -1246,8 +1246,11 @@
         (p.pid === S.captain ? '<span class="chip" style="font-size:1rem">capitaine</span>' : '') + '</div>';
     }).join('');
     if (S.players.length < 4) rows += '<div class="prow2 empty"><span class="av ghost" style="width:3.4rem;height:3.4rem"></span>En attente des joueurs…</div>';
-    var chips = '<span class="chip">' + st.count + ' épreuves</span>' +
-      st.games.map(function (g) { return '<span class="chip">' + esc(gameName(g)) + '</span>'; }).join('') +
+    var gamesTxt = st.games.length === Object.keys(GAMES).length ? 'Les ' + st.games.length + ' jeux' :
+      st.games.length > 2 ? st.games.length + ' jeux' : st.games.map(gameName).join(' + ');
+    var chips = '<span class="chip">' + st.count + ' épreuves</span><span class="chip">' + esc(gamesTxt) + '</span>' +
+      (st.mode === 'manches' ? '<span class="chip">Par manches</span>' : '') +
+      (st.teams ? '<span class="chip">2 équipes</span>' : '') +
       (st.finale ? '<span class="chip">Finale ×2</span>' : '');
     var who = S.captain ? esc(capName()) + ' lance la partie depuis son téléphone' : 'Le premier joueur arrivé lancera la partie';
     if (DATA.season && DATA.season.rows.length) {
@@ -1327,7 +1330,7 @@
     var feed = (S.feed || []).slice(-6).map(function (f) {
       var p = findP(f.pid);
       if (!p) return '';
-      return '<div class="srow" style="font-size:1.2rem">' + avR(p, 2) + '<span class="n">' + (f.ok ? '<b style="color:var(--good)">a trouvé !</b>' : esc(f.text) + (f.near ? ' <span class="muted">(presque)</span>' : '')) + '</span></div>';
+      return '<div class="srow" style="font-size:1.2rem">' + avR(p, 2) + '<span class="n">' + (f.ok ? '<b style="color:var(--good-ink)">a trouvé !</b>' : esc(f.text) + (f.near ? ' <span class="muted">(presque)</span>' : '')) + '</span></div>';
     }).join('');
     $('cqside').innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between"><span class="chip accent">Croquis' + (S.mult > 1 ? ' ×2' : '') + '</span><div class="ring" data-ring style="width:4.6rem;height:4.6rem;font-size:1.8rem"><span data-sec></span></div></div>' +
       '<div style="font-size:1.4rem">' + (dr ? avR(dr, 2.4) + ' <b>' + esc(dr.name) + '</b> dessine' : '') + '</div>' +
