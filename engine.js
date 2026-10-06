@@ -69,6 +69,28 @@
     return lev(x, y) <= (L <= 4 ? 0 : L <= 7 ? 1 : L <= 15 ? 2 : 3);
   }
 
+  // Mots connus (toutes les banques de mots), sous forme phonétique.
+  function knownWords(bank) {
+    if (!bank) return {};
+    if (bank.__known) return bank.__known;
+    var k = {};
+    function add(w) { var x = phon(normText(w)); if (x) k[x] = true; }
+    (bank.croquis || []).forEach(function (q) { add(q.a); (q.alt || []).forEach(add); });
+    (bank.pyramide || []).forEach(function (q) { add(q.a); });
+    try { Object.defineProperty(bank, '__known', { value: k }); } catch (e) { bank.__known = k; }
+    return k;
+  }
+
+  // Réponse au Croquis : tolère les fautes, mais un autre vrai mot n'est pas une faute
+  // (« moule » n'est pas accepté pour « poule »).
+  function matchGuess(text, words, known) {
+    var x = phon(normText(text));
+    if (!x) return false;
+    for (var i = 0; i < words.length; i++) if (phon(normText(words[i])) === x) return true;
+    if (known && known[x]) return false;
+    return words.some(function (w) { return similar(text, w); });
+  }
+
   // Presque juste (pour afficher « Presque ! » au Croquis).
   function nearMiss(a, b) {
     var x = phon(normText(a)), y = phon(normText(b));
@@ -622,7 +644,7 @@
     var text = String(m.text == null ? '' : m.text).replace(/\s+/g, ' ').trim().slice(0, 30);
     if (!normText(text)) return;
     var words = [cur.a].concat(cur.alt || []);
-    var ok = words.some(function (w) { return similar(text, w); });
+    var ok = matchGuess(text, words, knownWords(this.o.bank));
     var prev = s.fb[m.pid] ? s.fb[m.pid].n : 0;
     if (ok) {
       cur.found.push({ pid: m.pid, t: this.now() - cur.startedAt });
@@ -792,7 +814,7 @@
     this.finish(res);
   };
 
-  var api = { sanitizeSettings: sanitizeSettings, computeTitles: computeTitles, countsFor: countsFor, nearMiss: nearMiss, Engine: Engine, GAMES: GAMES, newState: newState, publicView: publicView, buildDeck: buildDeck, buildOrder: buildOrder, similar: similar, normText: normText, containsTruth: containsTruth };
+  var api = { sanitizeSettings: sanitizeSettings, computeTitles: computeTitles, countsFor: countsFor, nearMiss: nearMiss, Engine: Engine, GAMES: GAMES, newState: newState, publicView: publicView, buildDeck: buildDeck, buildOrder: buildOrder, similar: similar, matchGuess: matchGuess, knownWords: knownWords, normText: normText, containsTruth: containsTruth };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.SCEngine = api;
 })(this);
