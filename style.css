@@ -107,6 +107,22 @@ button { cursor: pointer; }
 .qrbox.sm svg { width: 100px; height: 100px; }
 .seg button { min-height: 44px; }
 
+/* Bluff / Dans l'ordre (téléphone) */
+.note.warn { background: #4A2A2A; color: #FFD9D3; }
+.choice .grow { flex: 1; }
+.choice .tag { font-size: 12px; color: var(--muted); font-weight: 600; }
+.choice.own { opacity: 0.5; border-style: dashed; }
+.olist { display: flex; flex-direction: column; gap: 10px; }
+.oitem { display: flex; align-items: center; gap: 12px; min-height: 62px; padding: 8px 12px; border-radius: 16px; background: var(--card); border: 2px solid var(--card2); touch-action: none; user-select: none; -webkit-user-select: none; transition: transform 0.15s ease; position: relative; }
+.oitem .letter { width: 38px; height: 38px; border-radius: 11px; font-size: 18px; background: var(--card2); }
+.oitem .t { flex: 1; font-size: 18px; font-weight: 600; }
+.oitem .grip { color: var(--muted); flex: none; }
+.oitem.drag { transition: none; z-index: 5; border-color: var(--accent); background: var(--card2); box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45); }
+.olist.done .oitem { opacity: 0.75; }
+.olist.done .grip { display: none; }
+.okmark { color: var(--good); font-weight: 800; font-size: 20px; }
+.komark { color: var(--bad); font-weight: 800; font-size: 20px; }
+
 /* ---------- télé ---------- */
 body.tv { overflow: hidden; }
 .tvw { width: 100vw; height: 100vh; padding: 3.2rem 4rem; display: flex; flex-direction: column; gap: 2rem; }
@@ -184,3 +200,21 @@ body.tv { overflow: hidden; }
   .verdict .big { font-size: 28px; }
   .prow { padding: 6px 10px; }
 }
+
+/* Bluff / Dans l'ordre (télé) */
+.tvw .grid2.small .opt { padding: 0.9rem 1.3rem; }
+.tvw .grid2.small .opt .t { font-size: 1.5rem; }
+.tvw .grid2.small .opt .letter { width: 2.6rem; height: 2.6rem; font-size: 1.3rem; }
+.tvw .opt.col { flex-direction: column; align-items: stretch; gap: 0.6rem; }
+.tvw .opt .meta { display: flex; align-items: center; justify-content: space-between; gap: 1rem; min-height: 2rem; }
+.tvw .truthtag { background: var(--good); color: var(--bg); font-weight: 800; border-radius: 999px; padding: 0.25rem 0.9rem; font-size: 1.05rem; }
+.tvw .liartag { display: flex; align-items: center; gap: 0.5rem; color: var(--muted); font-size: 1.1rem; }
+.tvw .grid4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1rem; }
+.tvw .ocard { background: var(--card); border-radius: 1.2rem; padding: 1.4rem 1.2rem; min-height: 7rem; display: flex; flex-direction: column; justify-content: center; gap: 0.4rem; text-align: center; }
+.tvw .ocard .t { font-size: 1.6rem; font-weight: 700; }
+.tvw .ocard .num { font-family: var(--display); font-weight: 800; font-size: 1.6rem; color: var(--good); }
+.tvw .ocard .v { color: var(--muted); font-size: 1.15rem; }
+.tvw .ocard.good { border: 2px solid var(--good); }
+.tvw .marks { display: flex; gap: 0.35rem; }
+.tvw .marks i { width: 1.2rem; height: 1.2rem; border-radius: 0.3rem; background: var(--card2); }
+.tvw .marks i.on { background: var(--good); }

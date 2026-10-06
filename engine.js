@@ -7,8 +7,11 @@
 
   var GAMES = {
     culture: { name: 'Culture générale', time: 20 },
-    estimation: { name: 'Estimation', time: 30 }
+    estimation: { name: 'Estimation', time: 30 },
+    bluff: { name: 'Le Bluff', time: 60, voteTime: 30 },
+    ordre: { name: 'Dans l\'ordre !', time: 30 }
   };
+  var LIE_MAX = 60;
   var EST_POINTS = [30, 20, 10, 0];
   var DRAW_MS = 3500;
   var MAX_PLAYERS = 6;
@@ -23,6 +26,51 @@
   }
 
   function clone(o) { return JSON.parse(JSON.stringify(o)); }
+
+  // ---------- comparaison de réponses tolérante aux fautes ----------
+  var SMALL_WORDS = ['le', 'la', 'les', 'l', 'un', 'une', 'des', 'du', 'de', 'd', 'au', 'aux', 'en', 'a', 'et'];
+
+  function normText(str) {
+    var t = String(str == null ? '' : str).toLowerCase();
+    if (t.normalize) t = t.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    t = t.replace(/œ/g, 'oe').replace(/æ/g, 'ae').replace(/[^a-z0-9]+/g, ' ');
+    return t.split(' ').filter(function (w) { return w && SMALL_WORDS.indexOf(w) < 0; })
+      .map(function (w) { return w.length > 3 ? w.replace(/[sx]$/, '') : w; }).join(' ');
+  }
+
+  // Écrit comme ça se prononce (à peu près) : « ponpié » ≈ « pompier ».
+  function phon(t) {
+    return t.replace(/ph/g, 'f').replace(/qu/g, 'k').replace(/c([aou])/g, 'k$1').replace(/ck/g, 'k')
+      .replace(/eau|au/g, 'o').replace(/ai|ei/g, 'e').replace(/(er|ez|et|ee|es)\b/g, 'e')
+      .replace(/m([bp])/g, 'n$1').replace(/y/g, 'i').replace(/h/g, '').replace(/([a-z])\1+/g, '$1');
+  }
+
+  function lev(a, b) {
+    var m = a.length, n = b.length, prev = [], cur, i, j;
+    for (j = 0; j <= n; j++) prev[j] = j;
+    for (i = 1; i <= m; i++) {
+      cur = [i];
+      for (j = 1; j <= n; j++) {
+        cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a.charAt(i - 1) === b.charAt(j - 1) ? 0 : 1));
+      }
+      prev = cur;
+    }
+    return prev[n];
+  }
+
+  function similar(a, b) {
+    var x = phon(normText(a)), y = phon(normText(b));
+    if (!x || !y) return false;
+    if (x === y) return true;
+    var L = Math.max(x.length, y.length);
+    return lev(x, y) <= (L <= 4 ? 0 : L <= 7 ? 1 : L <= 15 ? 2 : 3);
+  }
+
+  // La réponse reprend-elle la vérité (même entourée d'autres mots) ?
+  function containsTruth(answer, truth) {
+    var x = ' ' + phon(normText(answer)) + ' ', y = phon(normText(truth));
+    return y.length >= 5 && x.indexOf(' ' + y + ' ') >= 0;
+  }
 
   // Ordre des épreuves : équilibré entre les jeux, jamais deux fois le même d'affilée.
   function buildOrder(count, games) {
@@ -75,7 +123,7 @@
       phase: 'lobby',
       players: [],
       captain: null,
-      settings: { count: 15, games: ['culture', 'estimation'], finale: true },
+      settings: { count: 15, games: ['culture', 'estimation', 'bluff', 'ordre'], finale: true },
       deck: [],
       round: 0,
       cur: null,
@@ -92,10 +140,17 @@
   function publicView(s) {
     var p = clone(s);
     p.deck = s.deck.map(function (d) { return d.g; });
+    if (p.phase === 'question' || p.phase === 'vote') {
+      if (p.cur) { delete p.cur.a; delete p.cur.alt; delete p.cur.order; delete p.cur.vals; }
+    }
     if (p.phase === 'question') {
-      if (p.cur) delete p.cur.a;
       p.answered = Object.keys(s.answers);
       p.answers = {};
+    } else if (p.phase === 'vote') {
+      p.answered = Object.keys(s.votes || {});
+      p.answers = {};
+      p.votes = {};
+      p.options = (s.options || []).map(function (o) { return { id: o.id, text: o.text }; });
     } else {
       p.answered = Object.keys(s.answers);
     }
@@ -130,12 +185,13 @@
     var s = this.s, now = this.now();
     if (s.phase === 'draw') this.schedule(s.drawUntil - now, this.startQuestion);
     else if (s.phase === 'question' && s.cur) this.schedule(s.cur.deadline - now, this.closeQuestion);
+    else if (s.phase === 'vote' && s.cur) this.schedule(s.cur.deadline - now, this.closeVote);
   };
 
   Engine.prototype.remaining = function () {
     var s = this.s, now = this.now();
     if (s.phase === 'draw') return Math.max(0, s.drawUntil - now);
-    if (s.phase === 'question' && s.cur) return Math.max(0, s.cur.deadline - now);
+    if ((s.phase === 'question' || s.phase === 'vote') && s.cur) return Math.max(0, s.cur.deadline - now);
     return 0;
   };
 
@@ -193,12 +249,18 @@
         } else if (s.phase === 'question' && Object.keys(s.answers).length >= s.players.length) {
           this.closeQuestion();
           return;
+        } else if (s.phase === 'vote' && Object.keys(s.votes || {}).length >= s.players.length) {
+          this.closeVote();
+          return;
         }
         this.publish();
         break;
       }
       case 'answer':
         this.answer(m);
+        break;
+      case 'vote':
+        this.vote(m);
         break;
       case 'cmd':
         if (m.pid !== s.captain) return;
@@ -216,6 +278,26 @@
       if (typeof v !== 'number' || v !== Math.floor(v) || v < 0 || v > 3) return;
     } else if (s.cur.g === 'estimation') {
       if (typeof v !== 'number' || !isFinite(v)) return;
+    } else if (s.cur.g === 'ordre') {
+      if (!Array.isArray(v) || v.length !== s.cur.items.length) return;
+      var seen = {};
+      for (var i = 0; i < v.length; i++) {
+        if (typeof v[i] !== 'number' || v[i] < 0 || v[i] >= v.length || seen[v[i]]) return;
+        seen[v[i]] = true;
+      }
+    } else if (s.cur.g === 'bluff') {
+      v = String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, LIE_MAX);
+      if (!normText(v)) return;
+      s.reject = s.reject || {};
+      var truths = [s.cur.a].concat(s.cur.alt || []);
+      var isTruth = truths.some(function (t) { return similar(v, t) || containsTruth(v, t); });
+      var dup = Object.keys(s.answers).some(function (pid) { return similar(v, s.answers[pid].v); });
+      if (isTruth || dup) {
+        s.reject[m.pid] = { why: isTruth ? 'truth' : 'dup', n: (s.reject[m.pid] ? s.reject[m.pid].n : 0) + 1 };
+        this.publish(false);
+        return;
+      }
+      delete s.reject[m.pid];
     }
     s.answers[m.pid] = { v: v, t: this.now() - s.cur.startedAt };
     if (Object.keys(s.answers).length >= s.players.length) this.closeQuestion();
@@ -312,7 +394,19 @@
     s.cur = { g: item.g, id: item.id, q: q.q, a: q.a, startedAt: now, deadline: now + time, time: time };
     if (item.g === 'culture') s.cur.c = q.c;
     if (item.g === 'estimation') s.cur.u = q.u || '';
+    if (item.g === 'bluff') s.cur.alt = q.alt || [];
+    if (item.g === 'ordre') {
+      // affichage mélangé ; l'ordre juste reste secret jusqu'à la révélation
+      var idx = shuffle(q.items.map(function (_, i) { return i; }));
+      s.cur.items = idx.map(function (i) { return { t: q.items[i].t }; });
+      s.cur.vals = idx.map(function (i) { return q.items[i].v; });
+      s.cur.order = q.items.map(function (_, i) { return idx.indexOf(i); });
+      delete s.cur.a;
+    }
     s.answers = {};
+    s.reject = {};
+    s.options = null;
+    s.votes = {};
     s.phase = 'question';
     if (this.o.markPlayed) this.o.markPlayed(item.id);
     this.schedule(time, this.closeQuestion);
@@ -323,6 +417,7 @@
     var s = this.s;
     if (s.phase !== 'question') return;
     this.cancel();
+    if (s.cur.g === 'bluff') return this.startVote();
     var mult = s.mult || 1;
     var res = {}, answers = s.answers, cur = s.cur;
     s.players.forEach(function (p) { res[p.pid] = { v: null, pts: 0 }; });
@@ -344,15 +439,83 @@
         r.rank = (i > 0 && r.diff === rows[i - 1].diff) ? rows[i - 1].rank : i;
         res[r.pid] = { v: r.v, diff: r.diff, rank: r.rank, exact: r.diff === 0, pts: (EST_POINTS[r.rank] || 0) * mult };
       });
+    } else if (cur.g === 'ordre') {
+      Object.keys(answers).forEach(function (pid) {
+        if (!res[pid]) return;
+        var v = answers[pid].v, good = 0;
+        for (var i = 0; i < cur.order.length; i++) if (v[i] === cur.order[i]) good++;
+        res[pid] = { v: v, good: good, pts: (good * 5 + (good === cur.order.length ? 10 : 0)) * mult };
+      });
     }
 
-    s.players.forEach(function (p) { p.score += res[p.pid].pts; });
+    this.finish(res);
+  };
+
+  Engine.prototype.finish = function (res) {
+    var s = this.s;
+    s.players.forEach(function (p) { if (res[p.pid]) p.score += res[p.pid].pts; });
     s.result = res;
     s.phase = 'reveal';
     this.publish();
   };
 
-  var api = { Engine: Engine, GAMES: GAMES, newState: newState, publicView: publicView, buildDeck: buildDeck, buildOrder: buildOrder };
+  // Présentation homogène des réponses : majuscule au début, pas de point final.
+  function tidy(t) {
+    t = String(t).replace(/[\s.]+$/, '');
+    return t.charAt(0).toUpperCase() + t.slice(1);
+  }
+
+  // ---------- Le Bluff : vote ----------
+  Engine.prototype.startVote = function () {
+    var s = this.s, now = this.now(), self = this;
+    var opts = [{ text: s.cur.a, by: null }];
+    Object.keys(s.answers).forEach(function (pid) {
+      if (self.player(pid)) opts.push({ text: tidy(s.answers[pid].v), by: pid });
+    });
+    s.options = shuffle(opts).map(function (o, i) { return { id: 'o' + i, text: o.text, by: o.by }; });
+    s.votes = {};
+    s.reject = {};
+    if (opts.length < 2) return this.closeVote();
+    var time = GAMES.bluff.voteTime * 1000;
+    s.cur.deadline = now + time;
+    s.cur.time = time;
+    s.phase = 'vote';
+    this.schedule(time, this.closeVote);
+    this.publish();
+  };
+
+  Engine.prototype.vote = function (m) {
+    var s = this.s;
+    if (s.phase !== 'vote' || m.round !== s.round || !this.player(m.pid) || s.votes[m.pid]) return;
+    var opt = null;
+    (s.options || []).forEach(function (o) { if (o.id === m.opt) opt = o; });
+    if (!opt || opt.by === m.pid) return;
+    s.votes[m.pid] = opt.id;
+    if (Object.keys(s.votes).length >= s.players.length) this.closeVote();
+    else this.publish(false);
+  };
+
+  Engine.prototype.closeVote = function () {
+    var s = this.s;
+    if (s.phase !== 'vote' && s.phase !== 'question') return;
+    this.cancel();
+    var mult = s.mult || 1, res = {}, byId = {};
+    (s.options || []).forEach(function (o) { byId[o.id] = o; });
+    s.players.forEach(function (p) { res[p.pid] = { pts: 0, found: false, voted: s.votes[p.pid] || null, fooled: 0, lie: s.answers[p.pid] ? s.answers[p.pid].v : null }; });
+    Object.keys(s.votes).forEach(function (pid) {
+      var o = byId[s.votes[pid]];
+      if (!o || !res[pid]) return;
+      if (o.by === null) res[pid].found = true;
+      else if (res[o.by]) res[o.by].fooled++;
+    });
+    Object.keys(res).forEach(function (pid) {
+      var r = res[pid];
+      r.pts = ((r.found ? 15 : 0) + Math.min(15, r.fooled * 5)) * mult;
+    });
+    this.finish(res);
+  };
+
+  var api = { Engine: Engine, GAMES: GAMES, newState: newState, publicView: publicView, buildDeck: buildDeck, buildOrder: buildOrder, similar: similar, normText: normText, containsTruth: containsTruth };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.SCEngine = api;
 })(this);

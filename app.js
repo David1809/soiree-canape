@@ -7,6 +7,7 @@
   var COLORS = ['#FFC93C', '#FF7A6B', '#5AA2FF', '#3FD49A', '#FF8FD0', '#F5F3FF'];
   var COLOR_NAMES = ['Jaune', 'Corail', 'Bleu', 'Vert', 'Rose', 'Blanc'];
   var LETTERS = ['A', 'B', 'C', 'D'];
+  var LETTERS2 = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
   var CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
   var GAMES = SCEngine.GAMES;
   var STALE_MS = 12 * 3600 * 1000;
@@ -70,7 +71,7 @@
       }
       var st = row.state;
       if (st.phase === 'closed') { lsDel('sc_sess'); return fallback(); }
-      if (!sess.tv && (st.phase === 'draw' || st.phase === 'question' || st.phase === 'reveal')) {
+      if (!sess.tv && (st.phase === 'draw' || st.phase === 'question' || st.phase === 'vote' || st.phase === 'reveal')) {
         return showResumeChoice(sess, st);
       }
       start(sess, st);
@@ -264,13 +265,14 @@
     C.gotFresh = true;
     C.silent = 0;
     if (C.ready) netEl.hidden = true;
-    if (S.round !== C.myRound) { C.myRound = S.round; C.myAns = null; }
+    if (S.round !== C.myRound) { C.myRound = S.round; C.myAns = null; C.myVote = null; C.lieSent = false; C.rejN = 0; C.ordre = null; }
     if (S.phase === 'closed' && !C.engine) return showClosed(S.closedBy);
     render();
   }
 
   // ---------- chrono ----------
-  setInterval(function () {
+  setInterval(tickTimers, 200);
+  function tickTimers() {
     if (!C.S) return;
     var left = Math.max(0, C.endAt - Date.now());
     var total = (C.S.cur && C.S.cur.time) || 1;
@@ -280,7 +282,7 @@
     for (i = 0; i < els.length; i++) els[i].style.width = Math.min(100, left / total * 100) + '%';
     els = document.querySelectorAll('[data-ring]');
     for (i = 0; i < els.length; i++) els[i].style.setProperty('--p', Math.min(1, left / total));
-  }, 200);
+  }
 
   // ---------- rendu ----------
   function boot(msg) { C.view = ''; app.innerHTML = '<div class="boot"><div style="text-align:center">Soirée Canapé<div class="muted" style="font-size:16px;font-family:var(--body);font-weight:500;margin-top:10px">' + esc(msg) + '</div></div></div>'; }
@@ -290,6 +292,7 @@
     C.view = key;
     app.innerHTML = html;
     window.scrollTo(0, 0);
+    tickTimers();
     setTimeout(fit, 0);
     return true;
   }
@@ -356,6 +359,7 @@
     if (S.phase === 'lobby') return phoneLobby();
     if (S.phase === 'draw') return phoneDraw();
     if (S.phase === 'question') return phoneQuestion();
+    if (S.phase === 'vote') return phoneVote();
     if (S.phase === 'reveal') return phoneReveal();
     if (S.phase === 'final') return phoneFinal();
   }
@@ -502,14 +506,20 @@
       (S.mult > 1 ? '<span><span class="chip x2">Finale : points doubles</span></span>' : '') + '</div></div>');
   }
 
-  function phoneQuestion() {
-    var S = C.S, cur = S.cur, ans = answeredSet();
-    var done = C.myAns != null || ans[me.pid];
-    var key = 'q|' + S.round + '|' + (done ? 1 : 0);
-    var head = topbar() +
-      '<div class="stack" style="gap:8px"><div class="rowx"><span>' + esc(gameName(cur.g)) + ' · ' + S.round + '/' + S.deck.length + (S.mult > 1 ? ' · ×2' : '') + '</span>' +
+  function phoneHead(sub) {
+    var S = C.S, cur = S.cur;
+    return topbar() +
+      '<div class="stack" style="gap:8px"><div class="rowx"><span>' + esc(gameName(cur.g)) + (sub ? ' · ' + sub : '') + ' · ' + S.round + '/' + S.deck.length + (S.mult > 1 ? ' · ×2' : '') + '</span>' +
       '<b style="color:var(--ink)"><span data-sec></span> s</b></div><div class="bar"><i data-bar></i></div></div>' +
       '<h2>' + esc(cur.q) + '</h2>';
+  }
+
+  function phoneQuestion() {
+    var S = C.S, cur = S.cur, ans = answeredSet();
+    var rej = (S.reject || {})[me.pid];
+    if (cur.g === 'bluff' && rej && rej.n !== C.rejN) { C.rejN = rej.n; C.lieSent = false; }
+    var done = cur.g === 'bluff' ? (C.lieSent || ans[me.pid]) : (C.myAns != null || ans[me.pid]);
+    var key = 'q|' + S.round + '|' + (done ? 1 : 0) + '|' + C.rejN;
     var body = '';
     if (cur.g === 'culture') {
       body = '<div class="stack" id="opts">' + cur.c.map(function (t, i) {
@@ -526,10 +536,24 @@
         body = '<div class="card" style="text-align:center"><div class="label">Ta réponse</div><div class="display" style="font-size:34px;margin-top:6px">' +
           (C.myAns != null ? esc(fmt(C.myAns)) + (cur.u ? ' <span style="font-size:20px">' + esc(cur.u) + '</span>' : '') : 'envoyée') + '</div></div>';
       }
+    } else if (cur.g === 'bluff') {
+      if (!done) {
+        body = '<div class="stack"><input id="lie" class="input" maxlength="60" autocomplete="off" placeholder="Ta fausse réponse" value="' + esc(C.myAns || '') + '">' +
+          (rej ? '<div class="note warn">' + (rej.why === 'truth' ? 'Bien vu, c\'est la vraie réponse ! Invente plutôt un mensonge.' : 'Quelqu\'un a déjà écrit ça. Trouve autre chose.') + '</div>' :
+            '<div class="muted" style="font-size:14px;text-align:center">Invente une fausse réponse crédible pour piéger les autres</div>') +
+          '<button class="btn" id="sendlie">Envoyer mon mensonge</button></div>';
+      } else {
+        body = '<div class="card" style="text-align:center"><div class="label">Ton mensonge</div><div style="font-size:22px;font-weight:700;margin-top:6px">' + esc(C.myAns || 'envoyé') + '</div></div>';
+      }
+    } else if (cur.g === 'ordre') {
+      if (!C.ordre) C.ordre = cur.items.map(function (_, i) { return i; });
+      body = '<div class="olist' + (done ? ' done' : '') + '" id="olist">' + ordreItems() + '</div>' +
+        (done ? '' : '<button class="btn" id="sendordre">Valider mon ordre</button>');
     }
-    var fresh = setView(key, '<div class="ph">' + head + body + '<div class="grow"></div><div class="note" id="stat"></div></div>');
+    var fresh = setView(key, '<div class="ph">' + phoneHead() + body + '<div class="grow"></div><div class="note" id="stat"></div></div>');
     var n = (S.answered || []).length;
-    $('stat').textContent = done ? 'Réponse envoyée · ' + n + '/' + S.players.length + ' ont répondu' : 'Réponds avant la fin du chrono';
+    $('stat').textContent = done ? 'Réponse envoyée · ' + n + '/' + S.players.length + ' ont répondu' :
+      (cur.g === 'ordre' ? 'Fais glisser les cartes pour les classer' : 'Réponds avant la fin du chrono');
     fit();
     if (!fresh) return;
     on('opts', 'click', function (e) {
@@ -549,6 +573,95 @@
     }
     on('send', 'click', submit);
     on('num', 'keydown', function (e) { if (e.key === 'Enter') submit(); });
+    function sendLie() {
+      var v = $('lie').value.replace(/\s+/g, ' ').trim();
+      if (!v) { $('lie').focus(); return; }
+      C.myAns = v.slice(0, 60);
+      C.lieSent = true;
+      send({ t: 'answer', round: S.round, val: C.myAns });
+      render();
+    }
+    on('sendlie', 'click', sendLie);
+    on('lie', 'keydown', function (e) { if (e.key === 'Enter') sendLie(); });
+    on('sendordre', 'click', function () {
+      C.myAns = C.ordre.slice();
+      send({ t: 'answer', round: S.round, val: C.myAns });
+      render();
+    });
+    if (cur.g === 'ordre' && !done) bindDrag($('olist'));
+  }
+
+  function ordreItems() {
+    var items = C.S.cur.items;
+    return C.ordre.map(function (k, pos) {
+      return '<div class="oitem" data-pos="' + pos + '"><span class="letter">' + (pos + 1) + '</span><span class="t">' + esc(items[k].t) + '</span>' +
+        '<svg class="grip" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01"/></svg></div>';
+    }).join('');
+  }
+
+  // Glisser-déposer au doigt pour réordonner les cartes.
+  function bindDrag(list) {
+    if (!list) return;
+    var drag = null;
+    list.addEventListener('pointerdown', function (e) {
+      var el = e.target.closest ? e.target.closest('.oitem') : null;
+      if (!el) return;
+      e.preventDefault();
+      var els = list.querySelectorAll('.oitem');
+      var step = els.length > 1 ? els[1].getBoundingClientRect().top - els[0].getBoundingClientRect().top : el.offsetHeight;
+      drag = { el: el, els: els, from: Number(el.getAttribute('data-pos')), to: Number(el.getAttribute('data-pos')), y: e.clientY, step: step, id: e.pointerId };
+      try { el.setPointerCapture(e.pointerId); } catch (err) {}
+      el.classList.add('drag');
+    });
+    list.addEventListener('pointermove', function (e) {
+      if (!drag || e.pointerId !== drag.id) return;
+      var dy = e.clientY - drag.y, n = drag.els.length;
+      drag.to = Math.max(0, Math.min(n - 1, drag.from + Math.round(dy / drag.step)));
+      drag.el.style.transform = 'translateY(' + dy + 'px)';
+      for (var j = 0; j < n; j++) {
+        if (j === drag.from) continue;
+        var shift = 0;
+        if (drag.from < drag.to && j > drag.from && j <= drag.to) shift = -drag.step;
+        if (drag.from > drag.to && j < drag.from && j >= drag.to) shift = drag.step;
+        drag.els[j].style.transform = shift ? 'translateY(' + shift + 'px)' : '';
+      }
+    });
+    function end(e) {
+      if (!drag || e.pointerId !== drag.id) return;
+      var moved = C.ordre.splice(drag.from, 1)[0];
+      C.ordre.splice(drag.to, 0, moved);
+      drag = null;
+      list.innerHTML = ordreItems();
+    }
+    list.addEventListener('pointerup', end);
+    list.addEventListener('pointercancel', end);
+  }
+
+  function phoneVote() {
+    var S = C.S, ans = answeredSet();
+    var voted = C.myVote != null || ans[me.pid];
+    var mine = C.myAns ? String(C.myAns) : null;
+    var key = 'v|' + S.round + '|' + (voted ? 1 : 0);
+    var opts = (S.options || []).map(function (o, i) {
+      var own = mine && o.text === mine;
+      var cls = 'choice' + (voted ? (C.myVote === o.id ? ' sel' : ' dim') : '') + (own ? ' own' : '');
+      return '<button type="button" class="' + cls + '" data-o="' + o.id + '"' + (voted || own ? ' disabled' : '') + '><span class="letter">' + LETTERS2[i] + '</span><span class="grow">' + esc(o.text) + '</span>' +
+        (own ? '<span class="tag">ton mensonge</span>' : '') + '</button>';
+    }).join('');
+    var fresh = setView(key, '<div class="ph">' + phoneHead('vote') +
+      '<div class="muted" style="font-size:14px;margin-top:-6px">Laquelle est la vraie réponse ?</div><div class="stack" id="vopts">' + opts + '</div>' +
+      '<div class="grow"></div><div class="note" id="stat"></div></div>');
+    var n = (S.answered || []).length;
+    $('stat').textContent = voted ? 'Vote envoyé · ' + n + '/' + S.players.length + ' ont voté' : 'Vote avant la fin du chrono';
+    fit();
+    if (!fresh) return;
+    on('vopts', 'click', function (e) {
+      var b = e.target.closest ? e.target.closest('button') : null;
+      if (!b || b.disabled) return;
+      C.myVote = b.getAttribute('data-o');
+      send({ t: 'vote', round: S.round, opt: C.myVote });
+      render();
+    });
   }
 
   function rankingRows(withGain) {
@@ -562,7 +675,7 @@
 
   function phoneReveal() {
     var S = C.S, cur = S.cur, r = (S.result || {})[me.pid] || { v: null, pts: 0 };
-    var verdict = '';
+    var verdict = '', extra = '';
     if (cur.g === 'culture') {
       var good = cur.c[cur.a];
       if (r.ok) verdict = '<div class="verdict ok"><span>Bonne réponse !' + (r.fast ? ' Le plus rapide' : '') + '</span><span class="big">+' + r.pts + '</span><span>' + esc(good) + '</span></div>';
@@ -571,12 +684,35 @@
       var unit = cur.u ? ' ' + esc(cur.u) : '';
       verdict = '<div class="verdict ' + (r.pts ? 'ok' : 'ko') + '"><span' + (r.pts ? '' : ' class="muted"') + '>Bonne réponse</span><span class="big">' + esc(fmt(cur.a)) + unit + '</span>' +
         (r.v == null ? '<span>Pas de réponse</span>' : '<span>Toi : ' + esc(fmt(r.v)) + ' · écart ' + esc(fmt(r.diff)) + (r.pts ? ' · +' + r.pts : '') + '</span>') + '</div>';
+    } else if (cur.g === 'bluff') {
+      var truth = '', byOpt = {};
+      (S.options || []).forEach(function (o) { byOpt[o.id] = o; if (o.by === null) truth = o.text; });
+      var head;
+      if (r.found) head = 'Bien vu, c\'était la vérité !';
+      else if (r.voted && byOpt[r.voted] && byOpt[r.voted].by) {
+        var liar = findP(byOpt[r.voted].by);
+        head = 'Piégé par ' + esc(liar ? liar.name : 'un menteur') + ' !';
+      } else head = 'Pas de vote';
+      verdict = '<div class="verdict ' + (r.pts ? 'ok' : 'ko') + '"><span class="big" style="font-size:26px">' + head + '</span>' +
+        (r.fooled ? '<span>Ton mensonge a piégé ' + r.fooled + ' joueur' + (r.fooled > 1 ? 's' : '') + '</span>' : '') +
+        (r.pts ? '<span style="font-weight:800;font-size:22px">+' + r.pts + '</span>' : '') +
+        '<span' + (r.pts ? '' : ' class="muted"') + '>La vérité : <b>' + esc(truth) + '</b></span></div>';
+    } else if (cur.g === 'ordre') {
+      var n = cur.order.length;
+      verdict = '<div class="verdict ' + (r.pts ? 'ok' : 'ko') + '"><span class="big">' + (r.v == null ? 'Pas de réponse' : (r.good || 0) + ' / ' + n + ' bien placés') + '</span>' +
+        (r.pts ? '<span>+' + r.pts + (r.good === n ? ' · sans faute !' : '') + '</span>' : '') + '</div>';
+      extra = '<div class="stack" style="gap:6px">' + cur.order.map(function (k, pos) {
+        var ok = r.v && r.v[pos] === k;
+        return '<div class="prow"><span class="letter" style="width:30px;height:30px;border-radius:9px;font-size:15px">' + (pos + 1) + '</span><span class="n">' + esc(cur.items[k].t) +
+          (cur.vals[k] ? ' <span class="muted" style="font-size:13px;font-weight:500">' + esc(cur.vals[k]) + '</span>' : '') + '</span>' +
+          (r.v ? '<span class="' + (ok ? 'okmark' : 'komark') + '">' + (ok ? '✓' : '✗') + '</span>' : '') + '</div>';
+      }).join('') + '</div>';
     }
     var last = S.round >= S.deck.length;
     var ctrl = S.captain === me.pid ?
       '<button class="btn" id="next">' + (last ? 'Voir le classement final' : 'Épreuve suivante') + '</button>' :
       '<div class="note">' + esc(capName()) + ' passe à la suite</div>';
-    if (!setView('rev|' + S.round, '<div class="ph">' + topbar() + verdict + rankingRows(true) + '<div class="grow"></div>' + ctrl + '</div>')) return;
+    if (!setView('rev|' + S.round, '<div class="ph">' + topbar() + verdict + extra + rankingRows(true) + '<div class="grow"></div>' + ctrl + '</div>')) return;
     on('next', 'click', function () { send({ t: 'cmd', cmd: 'next' }); });
   }
 
@@ -605,6 +741,7 @@
     if (S.phase === 'lobby') return tvLobby();
     if (S.phase === 'draw') return tvDraw();
     if (S.phase === 'question') return tvQuestion();
+    if (S.phase === 'vote') return tvVote();
     if (S.phase === 'reveal') return tvReveal();
     if (S.phase === 'final') return tvFinal();
   }
@@ -633,9 +770,10 @@
       '<div class="muted" style="font-size:1.25rem">' + who + '</div></div></div></div></div>');
   }
 
-  function tvBar(withRing) {
+  function tvBar(withRing, sub) {
     var S = C.S, cur = S.cur;
-    return '<div class="tbar"><div class="l"><span class="chip accent">' + esc(gameName(cur.g)) + '</span><span class="muted">Épreuve ' + S.round + ' / ' + S.deck.length + '</span>' + x2chip() + '</div>' +
+    return '<div class="tbar"><div class="l"><span class="chip accent">' + esc(gameName(cur.g)) + '</span>' + (sub ? '<span class="chip">' + esc(sub) + '</span>' : '') +
+      '<span class="muted">Épreuve ' + S.round + ' / ' + S.deck.length + '</span>' + x2chip() + '</div>' +
       (withRing ? '<div class="ring" data-ring><span data-sec></span></div>' : '') + '</div>';
   }
 
@@ -645,9 +783,9 @@
       '<span class="g">' + esc(gameName(g)) + '</span>' + (S.mult > 1 ? '<span><span class="chip x2">Finale : points doubles</span></span>' : '') + '</div></div>');
   }
 
-  function tvWho() {
+  function tvWho(label) {
     var ans = answeredSet();
-    return '<span class="muted">Ont répondu</span>' + C.S.players.map(function (p) {
+    return '<span class="muted">' + (label || 'Ont répondu') + '</span>' + C.S.players.map(function (p) {
       var ok = ans[p.pid];
       return '<span class="who-it' + (ok ? '' : ' off') + '">' + avR(p, 2.8, !ok) + esc(p.name) + '</span>';
     }).join('');
@@ -661,9 +799,25 @@
       }).join('') + '</div>';
     } else if (cur.g === 'estimation') {
       body = '<div class="muted" style="font-size:1.8rem">Tapez un nombre sur votre téléphone' + (cur.u ? ' — réponse en ' + esc(cur.u) : '') + '</div>';
+    } else if (cur.g === 'bluff') {
+      body = '<div class="muted" style="font-size:1.8rem">Inventez une fausse réponse crédible sur votre téléphone</div>';
+    } else if (cur.g === 'ordre') {
+      body = '<div class="grid4">' + cur.items.map(function (it) {
+        return '<div class="ocard"><span class="t">' + esc(it.t) + '</span></div>';
+      }).join('') + '</div><div class="muted" style="font-size:1.4rem">Classez les cartes sur votre téléphone</div>';
     }
     setView('tq|' + S.round, '<div class="tvw">' + tvBar(true) + '<h1 class="q">' + esc(cur.q) + '</h1>' + body + '<div class="foot" id="who"></div></div>');
     $('who').innerHTML = tvWho();
+  }
+
+  function tvVote() {
+    var S = C.S, cur = S.cur;
+    var opts = (S.options || []).map(function (o, i) {
+      return '<div class="opt"><span class="letter">' + LETTERS2[i] + '</span><span class="t">' + esc(o.text) + '</span></div>';
+    }).join('');
+    setView('tv|' + S.round, '<div class="tvw">' + tvBar(true, 'Votez !') + '<h1 class="q" style="font-size:2.6rem">' + esc(cur.q) + '</h1>' +
+      '<div class="grid2 small">' + opts + '</div><div class="foot" id="who"></div></div>');
+    $('who').innerHTML = tvWho('Ont voté');
   }
 
   function tvSide() {
@@ -695,6 +849,26 @@
       }).join('');
       body = '<div><div class="muted" style="font-size:1.4rem;margin-bottom:.6rem">Bonne réponse</div><div class="truth">' + esc(fmt(cur.a)) + unit + '</div></div>' +
         '<div style="display:flex;flex-direction:column;gap:.7rem">' + rows + '</div>';
+    }
+    else if (cur.g === 'bluff') {
+      body = '<div class="grid2 small">' + (S.options || []).map(function (o, i) {
+        var voters = S.players.filter(function (p) { return res[p.pid] && res[p.pid].voted === o.id; });
+        var liar = o.by ? findP(o.by) : null;
+        var tag = o.by === null ? '<span class="truthtag">La vérité</span>' :
+          '<span class="liartag">' + (liar ? avR(liar, 1.8) + 'mensonge de ' + esc(liar.name) : 'mensonge') + '</span>';
+        return '<div class="opt col ' + (o.by === null ? 'good' : '') + '"><div style="display:flex;align-items:center;gap:1rem"><span class="letter">' + LETTERS2[i] + '</span><span class="t">' + esc(o.text) + '</span></div>' +
+          '<div class="meta">' + tag + '<span class="who">' + voters.map(function (p) { return avR(p, 2); }).join('') + '</span></div></div>';
+      }).join('') + '</div>';
+    } else if (cur.g === 'ordre') {
+      var rows = S.players.map(function (p) {
+        var r = res[p.pid] || {};
+        var marks = cur.order.map(function (k, pos) { return '<i class="' + (r.v && r.v[pos] === k ? 'on' : '') + '"></i>'; }).join('');
+        return '<div class="erow">' + avR(p, 2.6) + '<span class="n">' + esc(p.name) + '</span><span class="marks">' + marks + '</span>' +
+          '<span class="d">' + (r.v ? r.good + ' / ' + cur.order.length : 'pas de réponse') + '</span><span class="g">' + (r.pts ? '+' + r.pts : '') + '</span></div>';
+      }).join('');
+      body = '<div class="grid4">' + cur.order.map(function (k, pos) {
+        return '<div class="ocard good"><span class="num">' + (pos + 1) + '</span><span class="t">' + esc(cur.items[k].t) + '</span>' + (cur.vals[k] ? '<span class="v">' + esc(cur.vals[k]) + '</span>' : '') + '</div>';
+      }).join('') + '</div><div style="display:flex;flex-direction:column;gap:.6rem">' + rows + '</div>';
     }
     var next = S.round >= S.deck.length ? 'le classement final' : 'l\'épreuve suivante';
     setView('trev|' + S.round, '<div class="tvw"><div class="split"><div style="flex:1;display:flex;flex-direction:column;gap:1.6rem;min-width:0">' + tvBar(false) +
