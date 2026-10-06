@@ -13,7 +13,6 @@
     pyramide: { name: 'Pyramide', time: 30, announceTime: 12, min: 2, duo: true },
     croquis: { name: 'Croquis', time: 60, min: 2 },
     imposteur: { name: 'L\'Imposteur', time: 60, voteTime: 30, min: 3 },
-    punchline: { name: 'Punchline', time: 60, voteTime: 30, min: 3 },
     rebus: { name: 'Rébus emoji', time: 45 },
     petitbac: { name: 'Petit Bac', time: 60, checkTime: 35, min: 2 },
     reflexe: { name: 'Réflexe', time: 15, fixed: true },
@@ -581,17 +580,6 @@
     } else if (cur.g === 'geo') {
       if (!Array.isArray(v) || v.length !== 2 || !isFinite(v[0]) || !isFinite(v[1])) return;
       v = [Math.round(Number(v[0])), Math.round(Number(v[1]))];
-    } else if (cur.g === 'punchline') {
-      v = String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, LIE_MAX);
-      if (!normText(v)) return;
-      s.reject = s.reject || {};
-      var dupP = Object.keys(s.answers).some(function (pid) { return similar(v, s.answers[pid].v); });
-      if (dupP) {
-        s.reject[m.pid] = { why: 'dup', n: (s.reject[m.pid] ? s.reject[m.pid].n : 0) + 1 };
-        this.publish(false);
-        return;
-      }
-      delete s.reject[m.pid];
     } else if (s.cur.g === 'culture') {
       if (typeof v !== 'number' || v !== Math.floor(v) || v < 0 || v > 3) return;
     } else if (s.cur.g === 'estimation') {
@@ -668,9 +656,31 @@
       pace: pickOf(n.pace, ['calme', 'normal', 'rapide'], old.pace || 'normal'),
       diff: pickOf(n.diff, ['facile', 'mixte', 'difficile'], old.diff || 'mixte'),
       teams: n.teams === undefined ? !!old.teams : !!n.teams,
+      teamOf: cleanTeamOf(n.teamOf === undefined ? old.teamOf : n.teamOf),
       sound: n.sound === undefined ? old.sound !== false : !!n.sound,
       freq: freq
     };
+  }
+
+  // Composition des équipes choisie par le capitaine : { pid: 0 | 1 }.
+  function cleanTeamOf(t) {
+    var out = {};
+    if (!t || typeof t !== 'object') return out;
+    Object.keys(t).slice(0, 12).forEach(function (pid) { if (t[pid] === 0 || t[pid] === 1) out[String(pid).slice(0, 40)] = t[pid]; });
+    return out;
+  }
+  // Équipes de la partie : le choix du capitaine, les joueurs non placés vont dans l'équipe la plus petite.
+  // Si une équipe reste vide, on rééquilibre.
+  function teamsFor(players, teamOf) {
+    var out = {}, n = [0, 0];
+    teamOf = teamOf || {};
+    players.forEach(function (p) { if (teamOf[p.pid] === 0 || teamOf[p.pid] === 1) { out[p.pid] = teamOf[p.pid]; n[teamOf[p.pid]]++; } });
+    players.forEach(function (p) { if (out[p.pid] == null) { var t = n[0] <= n[1] ? 0 : 1; out[p.pid] = t; n[t]++; } });
+    if (players.length >= 2 && (!n[0] || !n[1])) {
+      var big = n[0] ? 0 : 1, moved = players[players.length - 1];
+      out[moved.pid] = 1 - big;
+    }
+    return out;
   }
 
   // L'appareil qui fait tourner la partie la ferme pour tout le monde.
@@ -694,7 +704,8 @@
     s.recorded = false;
     s.players.forEach(function (p) { s.stats[p.pid] = newStats(); delete p.team; });
     if (s.settings.teams && s.players.length >= 2) {
-      shuffle(s.players.slice()).forEach(function (p, i) { p.team = i % 2; });
+      var tf = teamsFor(s.players, s.settings.teamOf);
+      s.players.forEach(function (p) { p.team = tf[p.pid]; });
     }
     var excluded = this.o.getExcluded ? this.o.getExcluded() : {};
     s.deck = buildDeck(s.settings.count, games, this.o.bank, played,
@@ -788,7 +799,6 @@
       s.ready = {};
       delete s.cur.a;
     }
-    if (item.g === 'punchline') delete s.cur.a;
     if (item.g === 'petitbac') {
       var cats = shuffle(((this.o.bank.petitbac_cats) || ['Pays', 'Prénom', 'Animal', 'Métier', 'Fruit ou légume']).slice()).slice(0, 5);
       s.cur.l = q.l;
@@ -957,7 +967,7 @@
     var s = this.s;
     if (s.phase !== 'question') return;
     this.cancel();
-    if (s.cur.g === 'bluff' || s.cur.g === 'punchline') return this.startVote();
+    if (s.cur.g === 'bluff') return this.startVote();
     var mult = s.mult || 1;
     var res = {}, answers = s.answers, cur = s.cur;
     s.players.forEach(function (p) { res[p.pid] = { v: null, pts: 0 }; });
@@ -1088,7 +1098,6 @@
       if (cur.g === 'croquis' && r.role === 'drawer') st.drawn += r.finders || 0;
       if (cur.g === 'croquis' && r.found) st.guessed++;
       if (cur.g === 'pyramide' && r.role === 'giver' && cur.n === 1) st.kamikaze++;
-      if (cur.g === 'punchline') st.laughs += r.votes || 0;
       if (cur.g === 'imposteur' && r.role === 'imp' && !r.caught) st.spy++;
       if (cur.g === 'imposteur' && r.role === 'civ' && r.ok) st.detect++;
       if (cur.g === 'rebus' && r.found) st.rebus++;
@@ -1103,7 +1112,7 @@
     this.publish();
   };
 
-  function newStats() { return { byGame: {}, fast: 0, estWin: 0, fooled: 0, ordre: 0, drawn: 0, guessed: 0, kamikaze: 0, laughs: 0, spy: 0, detect: 0, rebus: 0, bac: 0, reflex: 0, clock: 0, memo: 0, geo: 0 }; }
+  function newStats() { return { byGame: {}, fast: 0, estWin: 0, fooled: 0, ordre: 0, drawn: 0, guessed: 0, kamikaze: 0, spy: 0, detect: 0, rebus: 0, bac: 0, reflex: 0, clock: 0, memo: 0, geo: 0 }; }
 
   var TITLES = [
     { k: 'fooled', name: 'Le Mytho', why: 'a piégé le plus de monde au Bluff' },
@@ -1113,7 +1122,6 @@
     { k: 'fast', name: 'L\'Éclair', why: 'le plus rapide en Culture G' },
     { k: 'ordre', name: 'L\'Historien', why: 'le meilleur à Dans l\'ordre' },
     { k: 'guessed', name: 'Le Devin', why: 'a deviné le plus de croquis' },
-    { k: 'laughs', name: 'Le Comique', why: 'ses punchlines ont fait le plus rire' },
     { k: 'spy', name: 'L\'Agent double', why: 'imposteur jamais démasqué' },
     { k: 'detect', name: 'Le Détective', why: 'a démasqué le plus d\'imposteurs' },
     { k: 'rebus', name: 'Le Décodeur', why: 'a résolu le plus de rébus' },
@@ -1153,7 +1161,7 @@
   // ---------- Le Bluff : vote ----------
   Engine.prototype.startVote = function () {
     var s = this.s, now = this.now(), self = this;
-    var opts = s.cur.g === 'punchline' ? [] : [{ text: s.cur.a, by: null }];
+    var opts = [{ text: s.cur.a, by: null }];
     Object.keys(s.answers).forEach(function (pid) {
       if (self.player(pid)) opts.push({ text: tidy(s.answers[pid].v), by: pid });
     });
@@ -1185,22 +1193,6 @@
     this.cancel();
     var mult = s.mult || 1, res = {}, byId = {};
     (s.options || []).forEach(function (o) { byId[o.id] = o; });
-    if (s.cur.g === 'punchline') {
-      // chaque vote reçu rapporte 10 points (30 au plus)
-      s.players.forEach(function (p) { res[p.pid] = { pts: 0, votes: 0, voted: s.votes[p.pid] || null, line: s.answers[p.pid] ? tidy(s.answers[p.pid].v) : null }; });
-      Object.keys(s.votes).forEach(function (pid) {
-        var o = byId[s.votes[pid]];
-        if (o && o.by && res[o.by]) res[o.by].votes++;
-      });
-      var best = 0;
-      Object.keys(res).forEach(function (pid) { if (res[pid].votes > best) best = res[pid].votes; });
-      Object.keys(res).forEach(function (pid) {
-        var r = res[pid];
-        r.top = best > 0 && r.votes === best;
-        r.pts = Math.min(30, r.votes * 10) * mult;
-      });
-      return this.finish(res);
-    }
     s.players.forEach(function (p) { res[p.pid] = { pts: 0, found: false, voted: s.votes[p.pid] || null, fooled: 0, lie: s.answers[p.pid] ? s.answers[p.pid].v : null }; });
     Object.keys(s.votes).forEach(function (pid) {
       var o = byId[s.votes[pid]];
@@ -1215,7 +1207,7 @@
     this.finish(res);
   };
 
-  var api = { sanitizeSettings: sanitizeSettings, computeTitles: computeTitles, countsFor: countsFor, nearMiss: nearMiss, Engine: Engine, GAMES: GAMES, newState: newState, publicView: publicView, buildDeck: buildDeck, buildOrder: buildOrder, fixFinale: fixFinale, geoDistance: geoDistance, firstLetter: firstLetter, similar: similar, matchGuess: matchGuess, knownWords: knownWords, normText: normText, containsTruth: containsTruth };
+  var api = { sanitizeSettings: sanitizeSettings, computeTitles: computeTitles, countsFor: countsFor, nearMiss: nearMiss, Engine: Engine, GAMES: GAMES, newState: newState, publicView: publicView, buildDeck: buildDeck, buildOrder: buildOrder, teamsFor: teamsFor, fixFinale: fixFinale, geoDistance: geoDistance, firstLetter: firstLetter, similar: similar, matchGuess: matchGuess, knownWords: knownWords, normText: normText, containsTruth: containsTruth };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.SCEngine = api;
 })(this);

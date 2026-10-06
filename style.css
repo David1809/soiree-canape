@@ -133,6 +133,7 @@ button { cursor: pointer; }
 .oitem .grip { color: var(--muted); flex: none; }
 .oitem.drag { transition: none; z-index: 5; background: var(--accent); box-shadow: 8px 10px 0 var(--ink); }
 .olist.done .oitem { opacity: 0.7; }
+.oitem.picked { background: #FDF0B8; transform: translateX(6px); box-shadow: 5px 5px 0 var(--ink); }
 .olist.done .grip { display: none; }
 .okmark { color: var(--good-ink); font-weight: 900; font-size: 20px; }
 .komark { color: var(--red); font-weight: 900; font-size: 20px; }
@@ -467,3 +468,12 @@ body.tv { overflow: hidden; background-size: 2rem 2rem; }
 .gtile.off span { color: var(--ink); }
 .gsum { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .gsum span { font-weight: 800; }
+
+/* Composition des équipes */
+.tcols { display: flex; gap: 10px; }
+.tcol { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; padding: 10px; border: 3px solid var(--ink); border-radius: 16px; box-shadow: var(--sh); }
+.tcol > b { font-family: var(--display); font-size: 20px; }
+.tcol.t0 { background: #FCE3DE; }
+.tcol.t1 { background: #DCEBF7; }
+.tcol .tp { width: 100%; font: inherit; color: var(--ink); text-align: left; gap: 8px; padding: 6px 8px; }
+.tcol .tp .n { font-size: 15px; }

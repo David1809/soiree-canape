@@ -1,7 +1,7 @@
 // Service worker minimal : rend le jeu installable et garde l'interface
 // disponible si le réseau hésite. Toujours le réseau d'abord, pour recevoir les mises à jour.
-var CACHE = 'soiree-canape-v18';
-var SHELL = ['./', 'index.html', 'style.css?v=18', 'app.js?v=18', 'engine.js?v=18', 'questions.js?v=18', 'geo.js?v=18', 'vendor/supabase.js?v=18', 'vendor/qrcode.js?v=18', 'vendor/legacy.js?v=18', 'old.css?v=18', 'icon-192.png', 'die.svg'];
+var CACHE = 'soiree-canape-v19';
+var SHELL = ['./', 'index.html', 'style.css?v=19', 'app.js?v=19', 'engine.js?v=19', 'questions.js?v=19', 'geo.js?v=19', 'vendor/supabase.js?v=19', 'vendor/qrcode.js?v=19', 'vendor/legacy.js?v=19', 'old.css?v=19', 'icon-192.png', 'die.svg'];
 
 self.addEventListener('install', function (e) {
   e.waitUntil(caches.open(CACHE).then(function (c) { return c.addAll(SHELL); }).then(function () { return self.skipWaiting(); }));

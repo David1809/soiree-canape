@@ -169,7 +169,7 @@
   // ---------- banque, signalements, saison ----------
   var DATA = { played: {}, reports: {}, season: null };
   var PREFIX = { culture: 'cg', estimation: 'es', bluff: 'bl', ordre: 'or', pyramide: 'py', croquis: 'cq',
-    imposteur: 'im', punchline: 'pu', rebus: 'rb', petitbac: 'pb', reflexe: 'rx', memoire: 'me', geo: 'geo', chrono: 'ch' };
+    imposteur: 'im', rebus: 'rb', petitbac: 'pb', reflexe: 'rx', memoire: 'me', geo: 'geo', chrono: 'ch' };
   // jeux sans vraie banque de questions (générés à la volée) : pas listés dans « Banque de questions »
   var GENERATED = { petitbac: 1, reflexe: 1, memoire: 1, chrono: 1 };
   var MONTHS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
@@ -342,7 +342,7 @@
     C.gotFresh = true;
     C.silent = 0;
     if (C.ready) netEl.hidden = true;
-    if (S.round !== C.myRound) { C.myRound = S.round; C.myAns = null; C.myVote = null; C.lieSent = false; C.rejN = 0; C.ordre = null; }
+    if (S.round !== C.myRound) { C.myRound = S.round; C.myAns = null; C.myVote = null; C.lieSent = false; C.rejN = 0; C.ordre = null; C.pick = null; C.dragging = false; }
     if (S.phase === 'closed' && !C.engine) return showClosed(S.closedBy);
     render();
   }
@@ -489,7 +489,7 @@
   // Ajuste l'écran téléphone à la hauteur réellement disponible (barre du navigateur
   // affichée ou non, polices chargées ou non) : jamais de défilement.
   function fit() {
-    if (C.tv) return;
+    if (C.tv || C.dragging) return;
     var h = window.innerHeight;
     document.documentElement.style.setProperty('--app-h', h + 'px');
     var el = app.firstElementChild;
@@ -510,6 +510,8 @@
 
   function render() {
     if (!C.S) return;
+    // pendant qu'on fait glisser une carte, on ne redessine pas l'écran (sinon la carte « fige »)
+    if (C.dragging) { C.renderLater = true; return; }
     if (C.tv) renderTv(); else renderPhone();
   }
 
@@ -648,9 +650,11 @@
   function phoneLobby() {
     var S = C.S, cap = S.captain === me.pid, st = S.settings;
     var key = 'lobby|' + JSON.stringify([S.players, S.captain, st]);
+    var tf = st.teams ? SCEngine.teamsFor(S.players, st.teamOf) : null;
     var chips = S.players.map(function (p) {
       var tag = p.pid === S.captain ? 'capitaine' : (p.pid === me.pid ? 'toi' : '');
       if (p.pid === S.captain && p.pid === me.pid) tag = 'toi · capitaine';
+      if (tf) tag = 'Équipe ' + 'AB'.charAt(tf[p.pid]) + (tag ? ' · ' + tag : '');
       return '<div class="pchip">' + av(p, 32) + '<span class="n">' + esc(p.name) + (tag ? '<span class="tag">' + tag + '</span>' : '') + '</span></div>';
     }).join('');
     var qr = '';
@@ -666,7 +670,9 @@
         '<div class="setrow"><span class="label">Épreuves</span><div class="seg grow" id="seg">' + seg + '</div></div>' +
         '<div class="gsum"><span>' + (st.games.length === nG ? 'Les ' + nG + ' jeux' : st.games.length + ' jeu' + (st.games.length > 1 ? 'x' : '') + ' sur ' + nG) + '</span>' +
         '<button type="button" class="tog" id="pickg">Choisir les jeux</button></div>' +
-        '<div class="toggles" id="games"><button type="button" class="tog' + (st.finale ? ' on' : '') + '" data-f="1" aria-pressed="' + st.finale + '">Finale ×2</button></div></div>';
+        '<div class="toggles" id="games"><button type="button" class="tog' + (st.finale ? ' on' : '') + '" data-f="1" aria-pressed="' + st.finale + '">Finale ×2</button>' +
+        '<button type="button" class="tog' + (st.teams ? ' on' : '') + '" data-t="1">2 équipes</button>' +
+        (st.teams ? '<button type="button" class="tog" id="compo">Composer</button>' : '') + '</div></div>';
     } else {
       settings = '<div class="note">C\'est ' + esc(capName()) + ' qui lance la partie</div>';
     }
@@ -691,6 +697,8 @@
       var b = e.target.closest ? e.target.closest('button') : null;
       if (!b) return;
       var s = { count: st.count, games: st.games.slice(), finale: st.finale };
+      if (b.id === 'compo') { C.screen = 'teams'; C.view = ''; render(); return; }
+      if (b.getAttribute('data-t')) { var nt = JSON.parse(JSON.stringify(st)); nt.teams = !st.teams; send({ t: 'cmd', cmd: 'settings', settings: nt }); return; }
       if (b.getAttribute('data-f')) s.finale = !s.finale;
       else {
         var g = b.getAttribute('data-g'), i = s.games.indexOf(g);
@@ -712,6 +720,7 @@
   function phoneScreen() {
     if (C.screen === 'settings' && C.S.captain === me.pid) return phoneSettings();
     if (C.screen === 'games' && C.S.captain === me.pid) return phoneGames();
+    if (C.screen === 'teams' && C.S.captain === me.pid) return phoneTeams();
     if (C.screen === 'questions' && C.S.captain === me.pid) return phoneQuestions();
     if (C.screen === 'season') return phoneSeason();
     C.screen = null;
@@ -736,6 +745,7 @@
       '</div>' +
       '<div class="toggles"><button type="button" class="tog' + (st.finale ? ' on' : '') + '" id="s-fin">Finale ×2</button>' +
       '<button type="button" class="tog' + (st.teams ? ' on' : '') + '" id="s-teams">2 équipes</button>' +
+      (st.teams ? '<button type="button" class="tog" id="s-compo">Composer les équipes</button>' : '') +
       '<button type="button" class="tog' + (st.sound !== false ? ' on' : '') + '" id="s-sound">Sons</button></div>' +
       '<button class="btn ghost small" id="topick">Choisir les jeux et leur fréquence</button>' +
       '<div class="grow"></div><button class="btn ghost small" id="toq">Banque de questions</button><button class="btn" id="done">Valider</button></div>')) return;
@@ -754,8 +764,45 @@
     on('topick', 'click', function () { C.screen = 'games'; C.view = ''; render(); });
     on('s-fin', 'click', function () { upd({ finale: !st.finale }); });
     on('s-teams', 'click', function () { upd({ teams: !st.teams }); });
+    on('s-compo', 'click', function () { C.screen = 'teams'; C.view = ''; render(); });
     on('s-sound', 'click', function () { upd({ sound: st.sound === false }); });
     on('toq', 'click', function () { C.screen = 'questions'; C.view = ''; loadPlayed(function () { loadReports(render); }); render(); });
+    on('done', 'click', backToLobby);
+    on('back', 'click', backToLobby);
+  }
+
+  // Composition des équipes : toucher un joueur le fait changer d'équipe
+  function phoneTeams() {
+    var S = C.S, st = S.settings, tf = SCEngine.teamsFor(S.players, st.teamOf);
+    function col(t) {
+      return '<div class="tcol t' + t + '"><b>Équipe ' + 'AB'.charAt(t) + '</b>' + S.players.filter(function (p) { return tf[p.pid] === t; }).map(function (p) {
+        return '<button type="button" class="prow tp" data-p="' + p.pid + '">' + av(p, 30) + '<span class="n">' + esc(p.name) + '</span></button>';
+      }).join('') + '</div>';
+    }
+    if (!setView('teams|' + JSON.stringify([tf, S.players.length]), '<div class="ph">' + screenHead('Les équipes') +
+      '<div class="muted" style="font-size:13px;margin-top:-6px">Touche un joueur pour le changer d\'équipe. Les nouveaux arrivants rejoignent l\'équipe la plus petite.</div>' +
+      '<div class="tcols" id="tcols">' + col(0) + col(1) + '</div><div class="grow"></div>' +
+      '<div class="duo-btns"><button class="btn ghost" id="tmix">Mélanger</button><button class="btn" id="done">Valider</button></div></div>')) return;
+    function save(map) {
+      var nx = JSON.parse(JSON.stringify(st));
+      nx.teamOf = map;
+      send({ t: 'cmd', cmd: 'settings', settings: nx });
+    }
+    on('tcols', 'click', function (e) {
+      var b = e.target.closest ? e.target.closest('button') : null;
+      if (!b) return;
+      var map = {};
+      S.players.forEach(function (p) { map[p.pid] = tf[p.pid]; });
+      var pid = b.getAttribute('data-p');
+      map[pid] = 1 - map[pid];
+      save(map);
+    });
+    on('tmix', 'click', function () {
+      var ids = S.players.map(function (p) { return p.pid; }), map = {};
+      for (var i = ids.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)), x = ids[i]; ids[i] = ids[j]; ids[j] = x; }
+      ids.forEach(function (pid, i) { map[pid] = i % 2; });
+      save(map);
+    });
     on('done', 'click', backToLobby);
     on('back', 'click', backToLobby);
   }
@@ -905,7 +952,7 @@
     if (G === 'chrono') return phoneChrono();
     var S = C.S, cur = S.cur, ans = answeredSet();
     var rej = (S.reject || {})[me.pid];
-    var writes = cur.g === 'bluff' || cur.g === 'punchline';
+    var writes = cur.g === 'bluff';
     if (writes && rej && rej.n !== C.rejN) { C.rejN = rej.n; C.lieSent = false; }
     var done = writes ? (C.lieSent || ans[me.pid]) : (C.myAns != null || ans[me.pid]);
     var key = 'q|' + S.round + '|' + (done ? 1 : 0) + '|' + C.rejN;
@@ -926,14 +973,13 @@
           (C.myAns != null ? esc(fmt(C.myAns)) + (cur.u ? ' <span style="font-size:20px">' + esc(cur.u) + '</span>' : '') : 'envoyée') + '</div></div>';
       }
     } else if (writes) {
-      var pl = cur.g === 'punchline';
       if (!done) {
-        body = '<div class="stack"><input id="lie" class="input" maxlength="60" autocomplete="off" placeholder="' + (pl ? 'Ta réponse la plus drôle' : 'Ta fausse réponse') + '" value="' + esc(C.myAns || '') + '">' +
+        body = '<div class="stack"><input id="lie" class="input" maxlength="60" autocomplete="off" placeholder="Ta fausse réponse" value="' + esc(C.myAns || '') + '">' +
           (rej ? '<div class="note warn">' + (rej.why === 'truth' ? 'Bien vu, c\'est la vraie réponse ! Invente plutôt un mensonge.' : 'Quelqu\'un a déjà écrit ça. Trouve autre chose.') + '</div>' :
-            '<div class="muted" style="font-size:14px;text-align:center">' + (pl ? 'Fais rire les autres : ils voteront pour leur préférée' : 'Invente une fausse réponse crédible pour piéger les autres') + '</div>') +
-          '<button class="btn" id="sendlie">' + (pl ? 'Envoyer ma punchline' : 'Envoyer mon mensonge') + '</button></div>';
+            '<div class="muted" style="font-size:14px;text-align:center">Invente une fausse réponse crédible pour piéger les autres</div>') +
+          '<button class="btn" id="sendlie">Envoyer mon mensonge</button></div>';
       } else {
-        body = '<div class="card" style="text-align:center"><div class="label">' + (pl ? 'Ta punchline' : 'Ton mensonge') + '</div><div style="font-size:22px;font-weight:700;margin-top:6px">' + esc(C.myAns || 'envoyé') + '</div></div>';
+        body = '<div class="card" style="text-align:center"><div class="label">Ton mensonge</div><div style="font-size:22px;font-weight:700;margin-top:6px">' + esc(C.myAns || 'envoyé') + '</div></div>';
       }
     } else if (cur.g === 'ordre') {
       if (!C.ordre) C.ordre = cur.items.map(function (_, i) { return i; });
@@ -943,7 +989,7 @@
     var fresh = setView(key, '<div class="ph">' + phoneHead() + body + '<div class="grow"></div><div class="note" id="stat"></div></div>');
     var n = (S.answered || []).length;
     $('stat').textContent = done ? 'Réponse envoyée · ' + n + '/' + S.players.length + ' ont répondu' :
-      (cur.g === 'ordre' ? 'Fais glisser les cartes pour les classer' : 'Réponds avant la fin du chrono');
+      (cur.g === 'ordre' ? 'Fais glisser les cartes, ou touche deux cartes pour les échanger' : 'Réponds avant la fin du chrono');
     fit();
     if (!fresh) return;
     on('opts', 'click', function (e) {
@@ -984,47 +1030,69 @@
   function ordreItems() {
     var items = C.S.cur.items;
     return C.ordre.map(function (k, pos) {
-      return '<div class="oitem" data-pos="' + pos + '"><span class="letter">' + (pos + 1) + '</span><span class="t">' + esc(items[k].t) + '</span>' +
+      return '<div class="oitem' + (C.pick === pos ? ' picked' : '') + '" data-pos="' + pos + '"><span class="letter">' + (pos + 1) + '</span><span class="t">' + esc(items[k].t) + '</span>' +
         '<svg class="grip" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01"/></svg></div>';
     }).join('');
   }
 
-  // Glisser-déposer au doigt pour réordonner les cartes.
+  // Glisser-déposer au doigt pour réordonner les cartes, ou toucher deux cartes pour les échanger.
   function bindDrag(list) {
     if (!list) return;
     var drag = null;
+    function zoom() { var z = parseFloat(app.firstElementChild && app.firstElementChild.style.zoom); return z > 0 ? z : 1; }
+    function redraw() { list.innerHTML = ordreItems(); }
+    function finish(commit) {
+      var d = drag;
+      drag = null;
+      C.dragging = false;
+      if (!d) return;
+      try { d.el.releasePointerCapture(d.id); } catch (err) {}
+      if (!d.moved) {
+        // simple toucher : sélection, puis échange avec la deuxième carte touchée
+        if (C.pick == null) C.pick = d.from;
+        else if (C.pick === d.from) C.pick = null;
+        else { var a = C.ordre[C.pick]; C.ordre[C.pick] = C.ordre[d.from]; C.ordre[d.from] = a; C.pick = null; }
+      } else if (commit) {
+        var moved = C.ordre.splice(d.from, 1)[0];
+        C.ordre.splice(d.to, 0, moved);
+        C.pick = null;
+      }
+      redraw();
+      if (C.renderLater) { C.renderLater = false; render(); }
+    }
     list.addEventListener('pointerdown', function (e) {
+      if (drag) return; // un seul doigt à la fois
       var el = e.target.closest ? e.target.closest('.oitem') : null;
       if (!el) return;
       e.preventDefault();
       var els = list.querySelectorAll('.oitem');
-      var step = els.length > 1 ? els[1].getBoundingClientRect().top - els[0].getBoundingClientRect().top : el.offsetHeight;
-      drag = { el: el, els: els, from: Number(el.getAttribute('data-pos')), to: Number(el.getAttribute('data-pos')), y: e.clientY, step: step, id: e.pointerId };
+      var step = els.length > 1 ? els[1].getBoundingClientRect().top - els[0].getBoundingClientRect().top : el.getBoundingClientRect().height;
+      var pos = Number(el.getAttribute('data-pos'));
+      drag = { el: el, els: els, from: pos, to: pos, y: e.clientY, step: step || 60, id: e.pointerId, moved: false, z: zoom() };
+      C.dragging = true;
       try { el.setPointerCapture(e.pointerId); } catch (err) {}
-      el.classList.add('drag');
     });
     list.addEventListener('pointermove', function (e) {
       if (!drag || e.pointerId !== drag.id) return;
       var dy = e.clientY - drag.y, n = drag.els.length;
+      if (!drag.moved && Math.abs(dy) < 8) return;
+      if (!drag.moved) { drag.moved = true; drag.el.classList.add('drag'); }
       drag.to = Math.max(0, Math.min(n - 1, drag.from + Math.round(dy / drag.step)));
-      drag.el.style.transform = 'translateY(' + dy + 'px)';
+      drag.el.style.transform = 'translateY(' + (dy / drag.z) + 'px)';
       for (var j = 0; j < n; j++) {
         if (j === drag.from) continue;
         var shift = 0;
-        if (drag.from < drag.to && j > drag.from && j <= drag.to) shift = -drag.step;
-        if (drag.from > drag.to && j < drag.from && j >= drag.to) shift = drag.step;
+        if (drag.from < drag.to && j > drag.from && j <= drag.to) shift = -drag.step / drag.z;
+        if (drag.from > drag.to && j < drag.from && j >= drag.to) shift = drag.step / drag.z;
         drag.els[j].style.transform = shift ? 'translateY(' + shift + 'px)' : '';
       }
     });
-    function end(e) {
-      if (!drag || e.pointerId !== drag.id) return;
-      var moved = C.ordre.splice(drag.from, 1)[0];
-      C.ordre.splice(drag.to, 0, moved);
-      drag = null;
-      list.innerHTML = ordreItems();
-    }
-    list.addEventListener('pointerup', end);
-    list.addEventListener('pointercancel', end);
+    list.addEventListener('pointerup', function (e) { if (drag && e.pointerId === drag.id) finish(true); });
+    list.addEventListener('pointercancel', function (e) { if (drag && e.pointerId === drag.id) finish(drag.moved); });
+    list.addEventListener('lostpointercapture', function (e) { if (drag && e.pointerId === drag.id) finish(drag.moved); });
+    // filet de sécurité : doigt relâché hors de la liste, appli mise en arrière-plan
+    window.addEventListener('pointerup', function () { if (drag) finish(true); });
+    window.addEventListener('blur', function () { if (drag) finish(false); });
   }
 
   function phoneVote() {
@@ -1032,15 +1100,14 @@
     var voted = C.myVote != null || ans[me.pid];
     var mine = C.myAns ? String(C.myAns) : null;
     var key = 'v|' + S.round + '|' + (voted ? 1 : 0);
-    var pl = S.cur.g === 'punchline';
     var opts = (S.options || []).map(function (o, i) {
       var own = mine && o.text === mine;
       var cls = 'choice' + (voted ? (C.myVote === o.id ? ' sel' : ' dim') : '') + (own ? ' own' : '');
       return '<button type="button" class="' + cls + '" data-o="' + o.id + '"' + (voted || own ? ' disabled' : '') + '><span class="letter">' + LETTERS2[i] + '</span><span class="grow">' + esc(o.text) + '</span>' +
-        (own ? '<span class="tag">' + (pl ? 'la tienne' : 'ton mensonge') + '</span>' : '') + '</button>';
+        (own ? '<span class="tag">ton mensonge</span>' : '') + '</button>';
     }).join('');
     var fresh = setView(key, '<div class="ph">' + phoneHead('vote') +
-      '<div class="muted" style="font-size:14px;margin-top:-6px">' + (pl ? 'Vote pour ta préférée (pas la tienne !)' : 'Laquelle est la vraie réponse ?') + '</div><div class="stack" id="vopts">' + opts + '</div>' +
+      '<div class="muted" style="font-size:14px;margin-top:-6px">Laquelle est la vraie réponse ?</div><div class="stack" id="vopts">' + opts + '</div>' +
       '<div class="grow"></div><div class="note" id="stat"></div></div>');
     var n = (S.answered || []).length;
     $('stat').textContent = voted ? 'Vote envoyé · ' + n + '/' + S.players.length + ' ont voté' : 'Vote avant la fin du chrono';
@@ -1287,11 +1354,6 @@
       return ['<div class="verdict ' + (r.pts ? 'ok' : 'ko') + '"><span class="big" style="font-size:26px">' + head + '</span>' +
         '<span>' + (r.role === 'imp' ? 'C\'était toi, l\'imposteur' : 'L\'imposteur : <b>' + esc(imp ? imp.name : '?') + '</b>') + '</span>' + plus(r.pts) +
         '<span>Les autres : <b>' + esc(pair[cur.ci]) + '</b> · imposteur : <b>' + esc(pair[1 - cur.ci]) + '</b></span></div>'];
-    }
-    if (cur.g === 'punchline') {
-      var best = S.players.filter(function (p) { return res[p.pid] && res[p.pid].top; }).map(function (p) { return p.name; });
-      return ['<div class="verdict ' + (r.pts ? 'ok' : 'ko') + '"><span class="big" style="font-size:26px">' + (r.line ? r.votes + ' vote' + (r.votes > 1 ? 's' : '') + ' pour toi' : 'Pas de punchline') + '</span>' + plus(r.pts) +
-        (r.line ? '<span>« ' + esc(r.line) + ' »</span>' : '') + (best.length ? '<span class="muted">La plus drôle : ' + esc(best.join(', ')) + '</span>' : '') + '</div>'];
     }
     if (cur.g === 'rebus') {
       return ['<div class="verdict ' + (r.found ? 'ok' : 'ko') + '"><span class="emo" style="font-size:34px">' + esc(cur.e || '') + '</span><span class="big" style="font-size:26px">' + esc(cur.a) + '</span>' +
@@ -1817,8 +1879,6 @@
       body = '<div class="muted" style="font-size:1.8rem">Tapez un nombre sur votre téléphone' + (cur.u ? ' — réponse en ' + esc(cur.u) : '') + '</div>';
     } else if (cur.g === 'bluff') {
       body = '<div class="muted" style="font-size:1.8rem">Inventez une fausse réponse crédible sur votre téléphone</div>';
-    } else if (cur.g === 'punchline') {
-      body = '<div class="muted" style="font-size:1.8rem">Écrivez la réponse la plus drôle sur votre téléphone</div>';
     } else if (cur.g === 'ordre') {
       body = '<div class="grid4">' + cur.items.map(function (it) {
         return '<div class="ocard"><span class="t">' + esc(it.t) + '</span></div>';
@@ -1973,14 +2033,6 @@
         '<div class="bigres ' + (cur.caught ? 'good' : '') + '">' + (imp ? avR(imp, 3) + ' ' : '') + esc(imp ? imp.name : '?') + (cur.caught ? ' est démasqué !' : ' s\'en sort !') + '</div>' +
         rows(S.players, function (r) { var v = r.vote ? findP(r.vote) : null; return '<span class="d">' + (v ? 'vote ' + esc(v.name) : 'pas de vote') + '</span>'; });
     }
-    if (cur.g === 'punchline') {
-      return '<div class="grid2 small">' + (S.options || []).map(function (o, i) {
-        var by = findP(o.by), r = res[o.by] || {};
-        var voters = S.players.filter(function (p) { return res[p.pid] && res[p.pid].voted === o.id; });
-        return '<div class="opt col ' + (r.top ? 'good' : '') + '"><div style="display:flex;align-items:center;gap:1rem"><span class="letter">' + LETTERS2[i] + '</span><span class="t">' + esc(o.text) + '</span></div>' +
-          '<div class="meta"><span class="liartag">' + (by ? avR(by, 1.8) + esc(by.name) : '') + '</span><span class="who">' + voters.map(function (p) { return avR(p, 2); }).join('') + '</span></div></div>';
-      }).join('') + '</div>';
-    }
     if (cur.g === 'rebus') {
       var finders = (cur.found || []).map(function (f) { var p = findP(f.pid); return p ? '<div class="srow">' + avR(p, 2.4) + '<span class="n">' + esc(p.name) + '</span><span class="g">+' + ((res[f.pid] || {}).pts || 0) + '</span></div>' : ''; }).join('');
       return '<div class="rebus tv sm"><span class="emo">' + esc(cur.e || '') + '</span></div><div class="truth">' + esc(cur.a) + '</div>' +
@@ -2020,7 +2072,7 @@
     var opts = (S.options || []).map(function (o, i) {
       return '<div class="opt"><span class="letter">' + LETTERS2[i] + '</span><span class="t">' + esc(o.text) + '</span></div>';
     }).join('');
-    setView('tv|' + S.round, '<div class="tvw">' + tvBar(true, cur.g === 'punchline' ? 'Votez pour la plus drôle !' : 'Votez !') + '<h1 class="q" style="font-size:2.6rem">' + esc(cur.q) + '</h1>' +
+    setView('tv|' + S.round, '<div class="tvw">' + tvBar(true, 'Votez !') + '<h1 class="q" style="font-size:2.6rem">' + esc(cur.q) + '</h1>' +
       '<div class="grid2 small">' + opts + '</div><div class="foot" id="who"></div></div>');
     $('who').innerHTML = tvWho('Ont voté');
   }
@@ -2099,7 +2151,7 @@
     var nb = tvNewReveal(cur, res);
     if (nb != null) {
       body = nb;
-      var head = cur.g === 'punchline' ? '<h1 class="q" style="font-size:2.2rem">' + esc(cur.q) + '</h1>' : cur.g === 'geo' ? '<div class="geoq tv"><b style="font-size:2.6rem">' + esc(cur.q) + '</b></div>' : '';
+      var head = cur.g === 'geo' ? '<div class="geoq tv"><b style="font-size:2.6rem">' + esc(cur.q) + '</b></div>' : '';
       setView('trev|' + S.round, '<div class="tvw"><div class="split"><div style="flex:1;display:flex;flex-direction:column;gap:1.6rem;min-width:0">' + tvBar(false) + head + body +
         '<div class="foot muted">' + esc(capName()) + ' lance ' + next + ' depuis son téléphone</div></div>' + tvSide() + '</div></div>');
       return;
