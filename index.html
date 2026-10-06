@@ -16,7 +16,37 @@
 <body>
 <div id="app"><div class="boot">Dé-lire</div></div>
 <div id="net" class="net" hidden>Connexion perdue… reconnexion en cours</div>
-<script>if (typeof globalThis === 'undefined') { window.globalThis = window; }</script>
+<script>
+// Vieux navigateurs (télés) : compléments chargés seulement si nécessaire + remontée des erreurs.
+(function () {
+  if (typeof globalThis === 'undefined') { window.globalThis = window; }
+  var old = !window.Promise || !Promise.prototype['finally'] || !Object.fromEntries || !window.AbortController ||
+    !window.Symbol || !window.NodeList || !NodeList.prototype.forEach || !Object.assign || !Array.from;
+  if (old) document.write('<script src="vendor/legacy.js"><\/script>');
+  var sent = 0, isTv = /[?&]tv/.test(location.search);
+  function diag(kind, msg) {
+    if (sent++ > 4) return;
+    try {
+      var x = new XMLHttpRequest();
+      x.open('POST', 'https://qsyrrcrknxdkdsxkoooa.supabase.co/rest/v1/meta', true);
+      x.setRequestHeader('apikey', 'sb_publishable_whJtaOQEsL6Q1YqsxtLU5w_mLhX3Ocz');
+      x.setRequestHeader('Content-Type', 'application/json');
+      x.setRequestHeader('Prefer', 'resolution=merge-duplicates');
+      x.send(JSON.stringify({ key: 'diag_' + (isTv ? 'tv_' : 'tel_') + kind, value: { msg: String(msg).slice(0, 500), ua: navigator.userAgent, old: old, at: new Date().toISOString() } }));
+    } catch (e) {}
+  }
+  window.__diag = diag;
+  if (isTv) diag('ua', 'ouverture');
+  window.onerror = function (msg, src, line, col) {
+    var where = String(src || '').split('/').pop() + ':' + line + ':' + col;
+    diag('err', msg + ' @ ' + where);
+    var boot = document.querySelector('.boot');
+    if (boot) boot.style.flexDirection = 'column';
+    if (boot) boot.innerHTML = 'Dé-lire<div style="font:16px sans-serif;margin-top:14px;max-width:80%;text-align:center">Ce navigateur bloque le jeu :<br>' +
+      String(msg).replace(/</g, '&lt;') + ' (' + where + ')<br><small>' + navigator.userAgent.replace(/</g, '&lt;') + '</small></div>';
+  };
+})();
+</script>
 <script src="vendor/supabase.js"></script>
 <script src="vendor/qrcode.js"></script>
 <script src="questions.js"></script>
