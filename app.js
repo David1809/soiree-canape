@@ -1,4 +1,4 @@
-// Soirée Canapé — interface (télé + téléphones) et synchronisation Supabase.
+// Dé-lire — interface (télé + téléphones) et synchronisation Supabase.
 (function () {
   'use strict';
 
@@ -83,7 +83,7 @@
     C.view = 'resume';
     var mine = null;
     (st.players || []).forEach(function (p) { if (p.pid === me.pid) mine = p; });
-    app.innerHTML = '<div class="ph"><h1 class="title">Soirée Canapé</h1><div class="grow"></div>' +
+    app.innerHTML = '<div class="ph"><h1 class="title">Dé-lire</h1><div class="grow"></div>' +
       '<div class="card stack" style="text-align:center"><span class="label">Partie en cours</span>' +
       '<span class="display" style="font-size:34px;letter-spacing:.2em">' + esc(sess.code) + '</span>' +
       '<span class="muted">Épreuve ' + st.round + ' / ' + (st.deck || []).length + (mine ? ' · tu as ' + mine.score + ' pts' : '') + '</span></div>' +
@@ -356,7 +356,7 @@
   }
 
   // ---------- rendu ----------
-  function boot(msg) { C.view = ''; app.innerHTML = '<div class="boot"><div style="text-align:center">Soirée Canapé<div class="muted" style="font-size:16px;font-family:var(--body);font-weight:500;margin-top:10px">' + esc(msg) + '</div></div></div>'; }
+  function boot(msg) { C.view = ''; app.innerHTML = '<div class="boot"><div style="text-align:center">Dé-lire<div class="muted" style="font-size:16px;font-family:var(--body);font-weight:500;margin-top:10px">' + esc(msg) + '</div></div></div>'; }
 
   function setView(key, html) {
     if (C.view === key) return false;
@@ -458,7 +458,7 @@
     }
     var full = C.S.players.length >= 6 && !findP(me.pid);
     var fresh = setView('join', '<div class="ph">' +
-      '<div><h1 class="title">Soirée Canapé</h1><div class="muted">Partie <b>' + esc(C.code) + '</b></div></div>' +
+      '<div><h1 class="title">Dé-lire</h1><div class="muted">Partie <b>' + esc(C.code) + '</b></div></div>' +
       '<div class="stack"><label class="label" for="nm">Ton prénom</label><input id="nm" class="input" maxlength="14" autocomplete="off" value="' + esc(me.name) + '"></div>' +
       '<div class="stack"><span class="label">Ta couleur</span><div class="colors" id="cols"></div></div>' +
       '<div class="grow"></div>' +
@@ -555,7 +555,7 @@
       settings = '<div class="note">C\'est ' + esc(capName()) + ' qui lance la partie</div>';
     }
     if (!setView(key, '<div class="ph">' +
-      '<div class="hd"><div><h1 class="title" style="font-size:28px">Soirée Canapé</h1><div class="muted" style="font-size:14px">' + S.players.length + ' joueur' + (S.players.length > 1 ? 's' : '') + ' dans la partie</div></div>' +
+      '<div class="hd"><div><h1 class="title" style="font-size:28px">Dé-lire</h1><div class="muted" style="font-size:14px">' + S.players.length + ' joueur' + (S.players.length > 1 ? 's' : '') + ' dans la partie</div></div>' +
       '<span class="codepill">' + esc(C.code) + '</span></div>' +
       qr + '<div class="pgrid">' + chips + '</div>' + settings +
       '<div class="grow"></div>' +
@@ -1259,7 +1259,7 @@
     }
     var tiles = C.code.split('').map(function (c) { return '<span>' + c + '</span>'; }).join('');
     setView(key, '<div class="tvw"><div class="lobby"><div class="l">' +
-      '<div><p class="brand-k">Soirée jeux</p><h1 class="brand">Soirée Canapé</h1></div>' +
+      '<div><p class="brand-k">Soirée jeux</p><h1 class="brand">Dé-lire</h1></div>' +
       '<div class="qrrow"><div class="qr">' + qrSvg(joinUrl()) + '</div><div style="display:flex;flex-direction:column;gap:1rem">' +
       '<div style="font-size:1.7rem;font-weight:600">Scannez avec votre téléphone</div>' +
       '<div class="muted" style="font-size:1.25rem">ou ouvrez ' + esc(location.host) + ' et entrez le code</div><div class="tiles">' + tiles + '</div></div></div></div>' +
@@ -1461,8 +1461,8 @@
   function showHome() {
     document.body.className = 'phone';
     C.view = 'home';
-    app.innerHTML = '<div class="ph"><div style="margin-top:6vh"><h1 class="title" style="font-size:46px">Soirée Canapé</h1><div class="muted" style="margin-top:8px">Le jeu de soirée de la famille</div></div>' +
-      '<div class="grow"></div>' +
+    app.innerHTML = '<div class="ph"><div style="margin-top:6vh"><h1 class="title" style="font-size:46px">Dé-lire</h1><div class="muted" style="margin-top:8px">Le jeu de soirée de la famille</div></div>' +
+      '<div class="grow homedie"></div>' +
       '<div class="stack"><label class="label" for="code">Rejoindre une partie</label><input id="code" class="input code" maxlength="4" placeholder="CODE" autocomplete="off" autocapitalize="characters">' +
       '<button class="btn" id="join">Rejoindre</button></div>' +
       '<div class="stack" style="margin-top:14px"><button class="btn ghost col" id="mk"><span>Créer une partie ici</span><span class="sub">Sans télé : ce téléphone sert de plateau</span></button>' +

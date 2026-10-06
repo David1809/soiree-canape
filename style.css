@@ -1,4 +1,4 @@
-/* Soirée Canapé — direction « Jeu de société » : papier kraft, cartes cernées, ombres franches */
+/* Dé-lire — direction « Jeu de société » : papier kraft, cartes cernées, ombres franches */
 :root {
   --bg: #EADBC0;
   --dot: #D6C3A0;
@@ -313,3 +313,9 @@ body.tv { overflow: hidden; background-size: 2rem 2rem; }
 .tvw .tteam b { font-family: var(--display); font-size: 1.8rem; }
 .tvw .tteam.t0 { background: #F9D5CE; }
 .tvw .tteam.t1 { background: #CFE2F2; }
+
+/* Dé de l'accueil téléphone : occupe l'espace libre, se réduit sur petits écrans */
+.homedie { min-height: 0; margin: 18px 22%; background: url(die.svg) center / contain no-repeat; animation: dieWobble 3.2s ease-in-out infinite; }
+@keyframes dieWobble { 0%, 100% { transform: rotate(-4deg); } 50% { transform: rotate(5deg) translateY(-4px); } }
+@media (prefers-reduced-motion: reduce) { .homedie { animation: none; } }
+@media (max-height: 600px) { .homedie { background: none; animation: none; } }

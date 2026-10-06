@@ -1,7 +1,7 @@
 {
   "id": "./",
-  "name": "Soirée Canapé",
-  "short_name": "Soirée Canapé",
+  "name": "Dé-lire",
+  "short_name": "Dé-lire",
   "description": "Le jeu de soirée de la famille",
   "start_url": "./",
   "scope": "./",

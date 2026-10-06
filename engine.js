@@ -1,4 +1,4 @@
-// Moteur de partie Soirée Canapé.
+// Moteur de partie Dé-lire.
 // Il tourne sur UN seul appareil (la télé, ou le téléphone qui a créé la partie)
 // et fait autorité : il reçoit les actions des joueurs et diffuse l'état.
 // Écrit en ES5 pour rester compatible avec le navigateur des télés Samsung.
