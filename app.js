@@ -89,6 +89,7 @@
       '<div class="grow"></div>' +
       '<button class="btn" id="resume">Reprendre la partie</button>' +
       '<button class="btn ghost" id="drop">' + (sess.engine ? 'Arrêter la partie pour tout le monde' : 'Quitter la partie') + '</button></div>';
+    fit();
     on('resume', 'click', function () { start(sess, st); });
     on('drop', 'click', function () {
       if (sess.engine) return closeRemote(sess.code, st);
@@ -289,8 +290,31 @@
     C.view = key;
     app.innerHTML = html;
     window.scrollTo(0, 0);
+    setTimeout(fit, 0);
     return true;
   }
+
+  // Ajuste l'écran téléphone à la hauteur réellement disponible (barre du navigateur
+  // affichée ou non, polices chargées ou non) : jamais de défilement.
+  function fit() {
+    if (C.tv) return;
+    var h = window.innerHeight;
+    document.documentElement.style.setProperty('--app-h', h + 'px');
+    var el = app.firstElementChild;
+    if (!el || !el.classList || !el.classList.contains('ph')) return;
+    el.style.zoom = '';
+    el.style.minHeight = '';
+    var sh = el.scrollHeight;
+    if (sh > h + 1) {
+      var z = Math.max(0.7, h / sh);
+      el.style.zoom = z;
+      el.style.minHeight = (h / z) + 'px';
+    }
+  }
+  window.addEventListener('resize', fit);
+  if (window.visualViewport) window.visualViewport.addEventListener('resize', fit);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(fit);
+  if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
 
   function render() {
     if (!C.S) return;
@@ -506,6 +530,7 @@
     var fresh = setView(key, '<div class="ph">' + head + body + '<div class="grow"></div><div class="note" id="stat"></div></div>');
     var n = (S.answered || []).length;
     $('stat').textContent = done ? 'Réponse envoyée · ' + n + '/' + S.players.length + ' ont répondu' : 'Réponds avant la fin du chrono';
+    fit();
     if (!fresh) return;
     on('opts', 'click', function (e) {
       var b = e.target.closest ? e.target.closest('button') : null;
@@ -714,6 +739,7 @@
     on('code', 'keydown', function (e) { if (e.key === 'Enter') go(); });
     on('mk', 'click', function () { createRoom(false); });
     on('tvb', 'click', function () { location.href = location.pathname + '?tv'; });
+    fit();
   }
 
   function showClosed(by) {
