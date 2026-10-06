@@ -1402,7 +1402,7 @@
       }).join('');
       body = '<div class="grid4">' + cur.order.map(function (k, pos) {
         return '<div class="ocard good"><span class="num">' + (pos + 1) + '</span><span class="t">' + esc(cur.items[k].t) + '</span>' + (cur.vals[k] ? '<span class="v">' + esc(cur.vals[k]) + '</span>' : '') + '</div>';
-      }).join('') + '</div><div style="display:flex;flex-direction:column;gap:.6rem">' + rows + '</div>';
+      }).join('') + '</div><div class="erows' + (S.players.length > 3 ? ' two' : '') + '">' + rows + '</div>';
     }
     else if (cur.g === 'pyramide') {
       var gv = findP(cur.giver), pt = findP(cur.partner);

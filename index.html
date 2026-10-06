@@ -11,7 +11,19 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito:wght@600;700;800;900&display=swap">
-<link rel="stylesheet" href="style.css?v=14">
+<link rel="stylesheet" href="style.css?v=16">
+<script>
+// Vieux navigateurs (ex. télé Samsung = Chrome 56) : pas de « gap » en flexbox ni de grille CSS -> feuille de secours.
+(function () {
+  var ua = navigator.userAgent, m, old = false;
+  if (!(window.CSS && CSS.supports && CSS.supports('display', 'grid') && CSS.supports('gap', '1px'))) old = true;
+  if ((m = /Chrome\/(\d+)/.exec(ua)) && +m[1] < 84) old = true;
+  if (!/Chrome|Android/.test(ua) && (m = /Version\/(\d+)\.(\d+).*Safari/.exec(ua)) && (+m[1] < 14 || (+m[1] === 14 && +m[2] < 1))) old = true;
+  if (window.__forceOldCss) old = true;
+  window.__oldCss = old;
+  if (old) document.write('<link rel="stylesheet" href="old.css?v=16">');
+})();
+</script>
 </head>
 <body>
 <div id="app"><div class="boot">Dé-lire</div></div>
@@ -22,7 +34,7 @@
   if (typeof globalThis === 'undefined') { window.globalThis = window; }
   var old = !window.Promise || !Promise.prototype['finally'] || !Object.fromEntries || !window.AbortController ||
     !window.Symbol || !window.NodeList || !NodeList.prototype.forEach || !Object.assign || !Array.from;
-  if (old) document.write('<script src="vendor/legacy.js?v=14"><\/script>');
+  if (old) document.write('<script src="vendor/legacy.js?v=16"><\/script>');
   var sent = 0, isTv = /[?&]tv/.test(location.search);
   function diag(kind, msg) {
     if (sent++ > 4) return;
@@ -36,7 +48,7 @@
     } catch (e) {}
   }
   window.__diag = diag;
-  if (isTv) diag('ua', 'ouverture');
+  if (isTv) diag('ua', 'ouverture ; old.css=' + !!window.__oldCss + ' ; grid=' + !!(window.CSS && CSS.supports && CSS.supports('display', 'grid')));
   window.onerror = function (msg, src, line, col) {
     var where = String(src || '').split('/').pop() + ':' + line + ':' + col;
     diag('err', msg + ' @ ' + where);
@@ -47,12 +59,11 @@
   };
 })();
 </script>
-<script src="vendor/supabase.js?v=14"></script>
+<script src="vendor/supabase.js?v=16"></script>
 <script>if (!window.supabase && window.__diag) window.__diag("nosb", "supabase.js non chargé");</script>
-<script src="vendor/qrcode.js?v=14"></script>
-<script src="questions.js?v=14"></script>
-<script src="engine.js?v=14"></script>
-<script src="vendor/gapfix.js?v=14"></script>
-<script src="app.js?v=14"></script>
+<script src="vendor/qrcode.js?v=16"></script>
+<script src="questions.js?v=16"></script>
+<script src="engine.js?v=16"></script>
+<script src="app.js?v=16"></script>
 </body>
 </html>

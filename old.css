@@ -1,0 +1,134 @@
+/* Généré par tools/make_old_css.py à partir de style.css — ne pas modifier à la main.
+   Chargé uniquement par les vieux navigateurs (sans gap en flexbox ni grille CSS). */
+.ph > * + * { margin-top: 14px; margin-left: 0; }
+.ph .stack > * + * { margin-top: 12px; margin-left: 0; }
+.btn > * + * { margin-left: 8px; }
+.btn.col > * + * { margin-top: 2px; margin-left: 0; }
+.colors > * { margin-right: 14px; margin-bottom: 14px; }
+.topbar > * + * { margin-left: 10px; }
+.choice > * + * { margin-left: 14px; }
+.note > * + * { margin-left: 10px; }
+.verdict > * + * { margin-top: 6px; margin-left: 0; }
+.plist > * + * { margin-top: 8px; margin-left: 0; }
+.prow > * + * { margin-left: 12px; }
+.seg { display: flex; }
+.seg > * { flex: 1 1 0%; min-width: 0; }
+.seg > * + * { margin-left: 8px; }
+.check > * + * { margin-left: 12px; }
+.drawcard > * + * { margin-top: 10px; margin-left: 0; }
+.hd > * + * { margin-left: 12px; }
+.pgrid { display: block; font-size: inherit; }
+.pgrid > * { display: inline-flex; vertical-align: top; box-sizing: border-box; margin-left: 10px; }
+.pgrid > input, .pgrid > select { display: inline-block; }
+.pgrid > * { width: calc((100% - 1 * 10px) / 2 - 1px); }
+.pgrid > *:nth-child(2n+1) { margin-left: 0; }
+.pgrid > *:nth-child(n+3) { margin-top: 10px; }
+.pchip > * + * { margin-left: 10px; }
+.setrow > * + * { margin-left: 12px; }
+.toggles > * { margin-right: 8px; margin-bottom: 8px; }
+.qrmini > * + * { margin-left: 14px; }
+.olist > * + * { margin-top: 10px; margin-left: 0; }
+.oitem > * + * { margin-left: 12px; }
+.wordcard > * + * { margin-top: 4px; margin-left: 0; }
+.duo > * { margin-right: 8px; margin-bottom: 8px; }
+.annonce { display: block; font-size: inherit; }
+.annonce > * { display: inline-flex; vertical-align: top; box-sizing: border-box; margin-left: 10px; }
+.annonce > input, .annonce > select { display: inline-block; }
+.annonce > * { width: calc((100% - 2 * 10px) / 3 - 1px); }
+.annonce > *:nth-child(3n+1) { margin-left: 0; }
+.annonce > *:nth-child(n+4) { margin-top: 10px; }
+.annonce button > * + * { margin-top: 2px; margin-left: 0; }
+.duo-btns { display: block; font-size: inherit; }
+.duo-btns > * { display: inline-flex; vertical-align: top; box-sizing: border-box; margin-left: 12px; }
+.duo-btns > input, .duo-btns > select { display: inline-block; }
+.duo-btns > * { width: calc((100% - 1 * 12px) / 2 - 1px); }
+.duo-btns > *:nth-child(2n+1) { margin-left: 0; }
+.duo-btns > *:nth-child(n+3) { margin-top: 12px; }
+.drawhead > * + * { margin-left: 8px; }
+.tools > * { margin-right: 10px; margin-bottom: 10px; }
+.guessrow > * + * { margin-left: 8px; }
+.pills > * { margin-right: 8px; margin-bottom: 8px; }
+.setgrid { display: block; font-size: inherit; }
+.setgrid > * { display: inline-flex; vertical-align: middle; box-sizing: border-box; margin-left: 10px; }
+.setgrid > input, .setgrid > select { display: inline-block; }
+.setgrid > *:nth-child(2n+1) { width: 82px; }
+.setgrid > *:nth-child(2n) { width: calc(100% - 82px - 10px - 1px); }
+.setgrid > *:nth-child(2n+1) { margin-left: 0; }
+.setgrid > *:nth-child(n+3) { margin-top: 8px; }
+.frow { display: block; font-size: inherit; }
+.frow > * { display: inline-flex; vertical-align: middle; box-sizing: border-box; margin-left: 8px; }
+.frow > input, .frow > select { display: inline-block; }
+.frow > *:nth-child(2n+1) { width: 110px; }
+.frow > *:nth-child(2n) { width: calc(100% - 110px - 8px - 1px); }
+.frow > *:nth-child(2n+1) { margin-left: 0; }
+.frow > *:nth-child(n+3) { margin-top: 8px; }
+.qrow > * + * { margin-top: 4px; margin-left: 0; }
+.titles > * + * { margin-top: 8px; margin-left: 0; }
+.teams { display: block; font-size: inherit; }
+.teams > * { display: inline-flex; vertical-align: top; box-sizing: border-box; margin-left: 10px; }
+.teams > input, .teams > select { display: inline-block; }
+.teams > * { width: calc((100% - 1 * 10px) / 2 - 1px); }
+.teams > *:nth-child(2n+1) { margin-left: 0; }
+.teams > *:nth-child(n+3) { margin-top: 10px; }
+.tvw > * + * { margin-top: 1.8rem; margin-left: 0; }
+.tvw .tbar .l > * + * { margin-left: 1.2rem; }
+.tvw .grid2 { display: block; font-size: inherit; }
+.tvw .grid2 > * { display: inline-flex; vertical-align: top; box-sizing: border-box; margin-left: 1.2rem; }
+.tvw .grid2 > input, .tvw .grid2 > select { display: inline-block; }
+.tvw .grid2 > * { width: calc((100% - 1 * 1.2rem) / 2 - 1px); }
+.tvw .grid2 > *:nth-child(2n+1) { margin-left: 0; }
+.tvw .grid2 > *:nth-child(n+3) { margin-top: 1.2rem; }
+.tvw .opt > * + * { margin-left: 1.2rem; }
+.tvw .opt .who > * { margin-right: 0.4rem; margin-bottom: 0.4rem; }
+.tvw .foot > * + * { margin-left: 1.4rem; }
+.tvw .who-it > * + * { margin-left: 0.6rem; }
+.tvw .split > * + * { margin-left: 3rem; }
+.tvw .side > * + * { margin-top: 0.9rem; margin-left: 0; }
+.tvw .srow > * + * { margin-left: 0.9rem; }
+.tvw .lobby > * + * { margin-left: 3.5rem; }
+.tvw .lobby .l > * + * { margin-top: 3.5rem; margin-left: 0; }
+.tvw .qrrow > * + * { margin-left: 2.2rem; }
+.tvw .tiles > * + * { margin-left: 0.6rem; }
+.tvw .players > * + * { margin-top: 0.9rem; margin-left: 0; }
+.tvw .prow2 > * + * { margin-left: 1rem; }
+.tvw .drawc > * + * { margin-top: 1rem; margin-left: 0; }
+.tvw .erow > * + * { margin-left: 1rem; }
+.tvw .podium > * + * { margin-top: 0.9rem; margin-left: 0; }
+.tvw .pod > * + * { margin-left: 1.4rem; }
+@media (max-height: 680px) {
+  .ph > * + * { margin-top: 10px; margin-left: 0; }
+}
+.tvw .opt.col > * + * { margin-top: 0.6rem; margin-left: 0; }
+.tvw .opt .meta > * + * { margin-left: 1rem; }
+.tvw .liartag > * + * { margin-left: 0.5rem; }
+.tvw .grid4 { display: block; font-size: inherit; }
+.tvw .grid4 > * { display: inline-flex; vertical-align: top; box-sizing: border-box; margin-left: 1.1rem; }
+.tvw .grid4 > input, .tvw .grid4 > select { display: inline-block; }
+.tvw .grid4 > * { width: calc((100% - 3 * 1.1rem) / 4 - 1px); }
+.tvw .grid4 > *:nth-child(4n+1) { margin-left: 0; }
+.tvw .grid4 > *:nth-child(n+5) { margin-top: 1.1rem; }
+.tvw .ocard > * + * { margin-top: 0.4rem; margin-left: 0; }
+.tvw .marks > * + * { margin-left: 0.35rem; }
+.tvw .pyrduo > * + * { margin-left: 1.2rem; }
+.tvw .pyrduo.big > * + * { margin-left: 1.8rem; }
+.tvw .cqrev > * + * { margin-left: 2rem; }
+.tvw .tteam > * + * { margin-left: 1rem; }
+.tvw .erows > * + * { margin-top: 0.4rem; margin-left: 0; }
+.tvw .erows.two > * { margin-right: 0; margin-bottom: 0; }
+.tvw .erows.two .erow > * + * { margin-left: 0.6rem; }
+.stack[style="gap:4px"] > * + * { margin-top: 4px; margin-left: 0; }
+.card.stack[style="gap:12px"] > * + * { margin-top: 12px; margin-left: 0; }
+.stack[style="gap:6px"] > * + * { margin-top: 6px; margin-left: 0; }
+.stack[style="gap:10px"] > * + * { margin-top: 10px; margin-left: 0; }
+.stack[style="gap:8px"] > * + * { margin-top: 8px; margin-left: 0; }
+[style="display:flex;flex-direction:column;gap:1rem"] > * + * { margin-top: 1rem; margin-left: 0; }
+[style="margin-top:auto;display:flex;flex-direction:column;gap:1rem"] > * + * { margin-top: 1rem; margin-left: 0; }
+[style="display:flex;gap:.6rem;flex-wrap:wrap"] > * { margin-right: .6rem; margin-bottom: .6rem; }
+[style="display:flex;gap:.5rem;flex-wrap:wrap"] > * { margin-right: .5rem; margin-bottom: .5rem; }
+[style="display:flex;flex-direction:column;gap:.5rem;margin-top:auto"] > * + * { margin-top: .5rem; margin-left: 0; }
+[style="display:flex;gap:.6rem;margin-bottom:.4rem"] > * + * { margin-left: .6rem; }
+[style="display:flex;flex-direction:column;gap:.7rem"] > * + * { margin-top: .7rem; margin-left: 0; }
+[style="display:flex;align-items:center;gap:1rem"] > * + * { margin-left: 1rem; }
+[style="flex:1;display:flex;flex-direction:column;gap:1rem"] > * + * { margin-top: 1rem; margin-left: 0; }
+[style="flex:1;display:flex;flex-direction:column;gap:1.6rem;min-width:0"] > * + * { margin-top: 1.6rem; margin-left: 0; }
+[style="display:flex;gap:1rem;justify-content:center"] > * + * { margin-left: 1rem; }

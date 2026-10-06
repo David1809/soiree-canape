@@ -209,7 +209,7 @@ body.tv { overflow: hidden; background-size: 2rem 2rem; }
 .tvw .opt .t { font-family: var(--display); font-size: 1.9rem; font-weight: 600; flex: 1; }
 .tvw .grid2 .opt.good { background: var(--green); color: var(--ink); box-shadow: 0.6rem 0.6rem 0 var(--ink); transform: scale(1.03) rotate(-1deg); }
 .tvw .opt.bad { opacity: 0.35; box-shadow: none; }
-.tvw .opt .who { display: flex; gap: 0.4rem; }
+.tvw .opt .who { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0.4rem; max-width: 45%; flex: none; }
 .tvw .ring { width: 6rem; height: 6rem; border-radius: 999px; display: flex; align-items: center; justify-content: center; font-family: var(--display); font-weight: 700; font-size: 2.4rem; background: conic-gradient(var(--red) calc(var(--p, 1) * 360deg), var(--paper2) 0); border: 3px solid var(--ink); box-shadow: 0.3rem 0.3rem 0 var(--ink); position: relative; }
 .tvw .ring::before { content: ''; position: absolute; top: 0.5rem; left: 0.5rem; right: 0.5rem; bottom: 0.5rem; border-radius: 999px; background: var(--paper); border: 3px solid var(--ink); }
 .tvw .ring span { position: relative; }
@@ -319,3 +319,17 @@ body.tv { overflow: hidden; background-size: 2rem 2rem; }
 @keyframes dieWobble { 0%, 100% { transform: rotate(-4deg); } 50% { transform: rotate(5deg) translateY(-4px); } }
 @media (prefers-reduced-motion: reduce) { .homedie { animation: none; } }
 @media (max-height: 600px) { .homedie { background: none; animation: none; } }
+
+/* Résultats « Dans l'ordre » sur la télé : plus compacts pour tenir à 4-6 joueurs */
+.tvw .grid4 .ocard.good { min-height: 0; padding: 0.7rem 0.9rem; }
+.tvw .grid4 .ocard.good .t { font-size: 1.4rem; }
+.tvw .erow { padding: 0.25rem 1rem; }
+.tvw .erow .av { width: 2rem !important; height: 2rem !important; font-size: 0.9rem !important; }
+.tvw .erows { display: flex; flex-direction: column; gap: 0.4rem; }
+.tvw .erows.two { flex-direction: row; flex-wrap: wrap; justify-content: space-between; gap: 0; }
+.tvw .erows.two .erow { width: calc(50% - 0.3rem); margin: 0 0 0.4rem 0; gap: 0.6rem; padding: 0.25rem 0.7rem; }
+.tvw .erows.two .marks i { width: 1rem; height: 1rem; }
+.tvw .erows.two .erow .n { width: auto; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tvw .erows.two .erow .d { display: none; }
+.tvw .erows.two .erow .g { width: 3.5rem; flex: none; }
+.tvw .opt .who .av { width: 1.9rem !important; height: 1.9rem !important; font-size: 0.85rem !important; }
