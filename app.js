@@ -335,6 +335,8 @@
   function onState(p) {
     if (!p || !p.s) return;
     var S = p.s;
+    // un plateau resté sur une ancienne version peut encore annoncer un jeu supprimé
+    if (S.settings && S.settings.games) S.settings.games = S.settings.games.filter(function (g) { return GAMES[g]; });
     var prevS = C.S;
     C.S = S;
     sfxState(prevS, S);
