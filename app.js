@@ -350,51 +350,55 @@
   function phoneLobby() {
     var S = C.S, cap = S.captain === me.pid, st = S.settings;
     var key = 'lobby|' + JSON.stringify([S.players, S.captain, st]);
-    var rows = S.players.map(function (p) {
-      var tags = [];
-      if (p.pid === S.captain) tags.push('capitaine');
-      if (p.pid === me.pid) tags.push('toi');
-      return '<div class="prow">' + av(p, 40) + '<span class="n">' + esc(p.name) + '</span><span class="muted" style="font-size:14px">' + tags.join(' · ') + '</span></div>';
+    var chips = S.players.map(function (p) {
+      var tag = p.pid === S.captain ? 'capitaine' : (p.pid === me.pid ? 'toi' : '');
+      if (p.pid === S.captain && p.pid === me.pid) tag = 'toi · capitaine';
+      return '<div class="pchip">' + av(p, 32) + '<span class="n">' + esc(p.name) + (tag ? '<span class="tag">' + tag + '</span>' : '') + '</span></div>';
     }).join('');
     var qr = '';
     if (!S.hasTv && C.engine) {
-      qr = '<div class="card stack" style="align-items:center;text-align:center"><span class="label">Faites scanner ce code aux autres joueurs</span>' +
-        '<div class="qrbox">' + qrSvg(joinUrl()) + '</div><div class="display" style="font-size:30px;letter-spacing:.3em">' + esc(C.code) + '</div></div>';
+      qr = '<div class="card qrmini"><div class="qrbox sm">' + qrSvg(joinUrl()) + '</div><div class="stack" style="gap:4px">' +
+        '<span style="font-weight:700;font-size:17px">Faites scanner ce QR code</span><span class="muted" style="font-size:13px">ou tapez le code ' + esc(C.code) + ' sur l\'accueil du jeu</span></div></div>';
     }
-    var settings = '';
+    var settings;
     if (cap) {
       var seg = [10, 15, 25].map(function (n) { return '<button type="button" data-n="' + n + '" class="' + (st.count === n ? 'on' : '') + '">' + n + '</button>'; }).join('');
       var games = Object.keys(GAMES).map(function (g) {
-        return '<label class="check"><input type="checkbox" data-g="' + g + '"' + (st.games.indexOf(g) >= 0 ? ' checked' : '') + '>' + esc(GAMES[g].name) + '</label>';
+        var onG = st.games.indexOf(g) >= 0;
+        return '<button type="button" class="tog' + (onG ? ' on' : '') + '" data-g="' + g + '" aria-pressed="' + onG + '">' + esc(GAMES[g].name) + '</button>';
       }).join('');
-      settings = '<div class="card stack"><span class="label">Nombre d\'épreuves</span><div class="seg" id="seg">' + seg + '</div>' +
-        '<span class="label" style="margin-top:6px">Jeux</span><div class="stack" id="games">' + games + '</div>' +
-        '<span class="label" style="margin-top:6px">Options</span><label class="check"><input type="checkbox" id="fin"' + (st.finale ? ' checked' : '') + '>Finale à points doubles</label></div>' +
-        '<button class="btn" id="start">Lancer la partie</button>';
+      settings = '<div class="card stack" style="gap:12px">' +
+        '<div class="setrow"><span class="label">Épreuves</span><div class="seg grow" id="seg">' + seg + '</div></div>' +
+        '<div class="toggles" id="games">' + games +
+        '<button type="button" class="tog' + (st.finale ? ' on' : '') + '" data-f="1" aria-pressed="' + st.finale + '">Finale ×2</button></div></div>';
     } else {
       settings = '<div class="note">C\'est ' + esc(capName()) + ' qui lance la partie</div>';
     }
     if (!setView(key, '<div class="ph">' +
-      '<div><h1 class="title">Soirée Canapé</h1><div class="muted">Partie ' + esc(C.code) + ' · ' + S.players.length + ' joueur' + (S.players.length > 1 ? 's' : '') + '</div></div>' +
-      qr + '<div class="plist">' + rows + '</div>' + settings +
+      '<div class="hd"><div><h1 class="title" style="font-size:28px">Soirée Canapé</h1><div class="muted" style="font-size:14px">' + S.players.length + ' joueur' + (S.players.length > 1 ? 's' : '') + ' dans la partie</div></div>' +
+      '<span class="codepill">' + esc(C.code) + '</span></div>' +
+      qr + '<div class="pgrid">' + chips + '</div>' + settings +
       '<div class="grow"></div>' +
-      '<button class="linkbtn" id="edit">Changer de prénom ou de couleur</button>' +
-      '<button class="linkbtn" id="quit">Quitter la partie</button></div>')) return;
+      (cap ? '<button class="btn" id="start">Lancer la partie</button>' : '') +
+      '<div class="links"><button class="linkbtn" id="edit">Modifier mon profil</button><button class="linkbtn" id="quit">Quitter</button></div></div>')) return;
 
-    function current() {
-      var g = [], boxes = document.querySelectorAll('#games input');
-      for (var i = 0; i < boxes.length; i++) if (boxes[i].checked) g.push(boxes[i].getAttribute('data-g'));
-      return { count: st.count, games: g.length ? g : st.games, finale: $('fin') ? $('fin').checked : st.finale };
-    }
     on('seg', 'click', function (e) {
       var n = e.target.getAttribute && e.target.getAttribute('data-n');
       if (!n) return;
-      var s = current(); s.count = Number(n);
+      send({ t: 'cmd', cmd: 'settings', settings: { count: Number(n), games: st.games, finale: st.finale } });
+    });
+    on('games', 'click', function (e) {
+      var b = e.target.closest ? e.target.closest('button') : null;
+      if (!b) return;
+      var s = { count: st.count, games: st.games.slice(), finale: st.finale };
+      if (b.getAttribute('data-f')) s.finale = !s.finale;
+      else {
+        var g = b.getAttribute('data-g'), i = s.games.indexOf(g);
+        if (i >= 0) { if (s.games.length === 1) return; s.games.splice(i, 1); } else s.games.push(g);
+      }
       send({ t: 'cmd', cmd: 'settings', settings: s });
     });
-    on('games', 'change', function () { send({ t: 'cmd', cmd: 'settings', settings: current() }); });
-    on('fin', 'change', function () { send({ t: 'cmd', cmd: 'settings', settings: current() }); });
-    on('start', 'click', function () { keepAwake(); send({ t: 'cmd', cmd: 'start', settings: current() }); });
+    on('start', 'click', function () { keepAwake(); send({ t: 'cmd', cmd: 'start', settings: st }); });
     on('edit', 'click', function () { C.editing = true; C.view = ''; render(); });
     on('quit', 'click', leave);
   }
@@ -651,6 +655,10 @@
     C.view = 'err';
     app.innerHTML = '<div class="ph"><h1 class="title">Oups</h1><div class="note">' + esc(msg) + '</div><div class="grow"></div><button class="btn" id="home">Retour à l\'accueil</button></div>';
     on('home', 'click', function () { location.href = location.pathname; });
+  }
+
+  if ('serviceWorker' in navigator && location.protocol === 'https:') {
+    navigator.serviceWorker.register('sw.js').catch(function () {});
   }
 
   init();
