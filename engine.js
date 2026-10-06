@@ -14,6 +14,7 @@
     croquis: { name: 'Croquis', time: 60, min: 2 }
   };
   var OFFLINE_MS = 25000;
+  var ABANDON_MS = 60000; // partie abandonnée : plus aucun téléphone depuis 1 min
   var LIE_MAX = 60;
   var EST_POINTS = [30, 20, 10, 0];
   var DRAW_MS = 3500;
@@ -239,9 +240,46 @@
       var off = now - (self.seen[p.pid] || 0) > OFFLINE_MS;
       if (!!p.off !== off) { p.off = off; changed = true; }
     });
+    // capitaine injoignable : un joueur présent prend le relais
+    var cap = this.player(s.captain);
+    if (cap && cap.off) {
+      var on = this.active();
+      if (on.length) { s.captain = on[0].pid; changed = true; }
+    }
+    // plus aucun téléphone depuis un moment pendant une partie : retour au QR code
+    var playing = s.phase !== 'lobby' && s.phase !== 'closed';
+    if (playing && s.players.length && !this.active().length) {
+      if (!this.allOffSince) this.allOffSince = now;
+      if (now - this.allOffSince > ABANDON_MS) {
+        this.allOffSince = 0;
+        this.toLobby(true);
+        this.publish();
+        return;
+      }
+    } else {
+      this.allOffSince = 0;
+    }
     if (changed) {
       if (!this.checkDone()) this.publish(false);
     }
+  };
+
+  // Premier joueur présent (à défaut, le premier de la liste).
+  Engine.prototype.nextCaptain = function () {
+    var on = this.active();
+    if (on.length) return on[0].pid;
+    return this.s.players.length ? this.s.players[0].pid : null;
+  };
+
+  // Retour au salon (écran QR code). dropGone : on retire aussi les joueurs injoignables.
+  Engine.prototype.toLobby = function (dropGone) {
+    var s = this.s;
+    this.cancel();
+    if (dropGone) s.players = s.players.filter(function (p) { return !p.off; });
+    s.phase = 'lobby'; s.round = 0; s.deck = []; s.cur = null; s.answers = {}; s.result = null;
+    s.votes = {}; s.options = null; s.reject = {};
+    s.players.forEach(function (p) { p.score = 0; });
+    if (!this.player(s.captain)) s.captain = this.nextCaptain();
   };
 
   Engine.prototype.active = function () {
@@ -378,11 +416,13 @@
         if (!this.player(m.pid)) return;
         s.players = s.players.filter(function (x) { return x.pid !== m.pid; });
         delete s.answers[m.pid];
-        if (s.captain === m.pid) s.captain = s.players.length ? s.players[0].pid : null;
-        if (!s.players.length && s.phase !== 'lobby') {
-          // plus personne : on revient au salon
-          this.cancel();
-          s.phase = 'lobby'; s.round = 0; s.deck = []; s.cur = null; s.answers = {}; s.result = null;
+        var wasCaptain = s.captain === m.pid;
+        if (wasCaptain) s.captain = this.nextCaptain();
+        if (s.phase !== 'lobby' && s.phase !== 'closed' && (!s.players.length || wasCaptain)) {
+          // plus personne, ou le capitaine est parti : la partie s'arrête, retour au QR code
+          this.toLobby(false);
+          this.publish();
+          return;
         } else if (s.phase === 'question' && s.cur && (s.cur.giver === m.pid || s.cur.partner === m.pid || s.cur.drawer === m.pid)) {
           // un rôle clé est parti : on arrête l'épreuve
           this.closeQuestion();
@@ -462,9 +502,7 @@
         break;
       case 'lobby':
         if (s.phase === 'final' || s.phase === 'reveal') {
-          this.cancel();
-          s.phase = 'lobby'; s.round = 0; s.deck = []; s.cur = null; s.answers = {}; s.result = null;
-          s.players.forEach(function (p) { p.score = 0; });
+          this.toLobby(false);
           this.publish();
         }
         break;

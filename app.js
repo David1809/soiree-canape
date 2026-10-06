@@ -511,7 +511,7 @@
     }
     if (inGame && !window.confirm('Quitter la partie en cours ? Tes points seront perdus.')) return;
     send({ t: 'leave' });
-    goHome(400);
+    goHome(900); // laisse le temps au message de partir avant de quitter la page
   }
 
   // Pyramide et Croquis se jouent à 2 minimum : on prévient au lieu de lancer autre chose.
