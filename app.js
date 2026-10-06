@@ -155,6 +155,7 @@
     if (C.tv) { sizeTv(); window.addEventListener('resize', sizeTv); }
     try { history.replaceState(null, '', C.tv ? '?tv' : '?r=' + sess.code); } catch (e) {}
     if (sess.engine) C.engine = makeEngine(sess.code, state, sess.tv);
+    loadSeason();
     connect();
     if (C.engine) C.engine.publish(false);
     else if (state) {
@@ -165,11 +166,71 @@
     }
   }
 
-  function makeEngine(code, state, hasTv) {
-    var played = {}, persistT = null;
+  // ---------- banque, signalements, saison ----------
+  var DATA = { played: {}, reports: {}, season: null };
+  var PREFIX = { culture: 'cg', estimation: 'es', bluff: 'bl', ordre: 'or', pyramide: 'py', croquis: 'cq' };
+  var MONTHS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+
+  function loadPlayed(cb) {
     sb.from('played').select('qid').then(function (r) {
-      (r.data || []).forEach(function (x) { played[x.qid] = true; });
+      var o = {};
+      (r.data || []).forEach(function (x) { o[x.qid] = true; });
+      DATA.played = o;
+      if (cb) cb();
     });
+  }
+  function loadReports(cb) {
+    sb.from('reports').select('qid').then(function (r) {
+      var o = {};
+      (r.data || []).forEach(function (x) { o[x.qid] = true; });
+      DATA.reports = o;
+      if (cb) cb();
+    });
+  }
+
+  function seasonStart(cfg) {
+    var d = new Date(), start;
+    if (cfg.dur === 'all') start = new Date(0);
+    else if (cfg.dur === '3m') start = new Date(d.getFullYear(), Math.floor(d.getMonth() / 3) * 3, 1);
+    else start = new Date(d.getFullYear(), d.getMonth(), 1);
+    if (cfg.resetAt && Date.parse(cfg.resetAt) > start.getTime()) start = new Date(cfg.resetAt);
+    return start;
+  }
+  function seasonLabel(cfg) {
+    var d = new Date();
+    if (cfg.dur === 'all') return 'Depuis le début';
+    if (cfg.dur === '3m') return 'Trimestre de ' + MONTHS[Math.floor(d.getMonth() / 3) * 3] + ' à ' + MONTHS[Math.floor(d.getMonth() / 3) * 3 + 2];
+    return 'Saison de ' + MONTHS[d.getMonth()] + ' ' + d.getFullYear();
+  }
+
+  function loadSeason(cb) {
+    sb.from('meta').select('value').eq('key', 'season').maybeSingle().then(function (m) {
+      var cfg = (m && m.data && m.data.value) || { dur: '1m' };
+      sb.from('games').select('finished_at, players').then(function (r) {
+        var from = seasonStart(cfg).getTime(), rows = {};
+        (r.data || []).forEach(function (g) {
+          if (Date.parse(g.finished_at) < from) return;
+          var ps = g.players || [], max = Math.max.apply(null, ps.map(function (p) { return p.score; }).concat([0]));
+          ps.forEach(function (p) {
+            var k = String(p.name || '').toLowerCase();
+            var row = rows[k] || (rows[k] = { name: p.name, color: p.color, wins: 0, games: 0, pts: 0 });
+            row.games++; row.pts += p.score; row.color = p.color;
+            if (p.score === max && max > 0) row.wins++;
+          });
+        });
+        var list = Object.keys(rows).map(function (k) { return rows[k]; })
+          .sort(function (a, b) { return b.wins - a.wins || b.pts - a.pts; });
+        DATA.season = { cfg: cfg, rows: list, label: seasonLabel(cfg), stamp: Date.now() };
+        if (cb) cb();
+        if (C.S && (C.tv || C.screen === 'season')) { C.view = ''; render(); }
+      });
+    });
+  }
+
+  function makeEngine(code, state, hasTv) {
+    var persistT = null;
+    loadPlayed(); loadReports();
+    setInterval(function () { if (C.S && C.S.phase === 'lobby') { loadPlayed(); loadReports(); } }, 30000);
     return new SCEngine.Engine({
       code: code, hasTv: hasTv, state: state, bank: QUESTIONS,
       broadcast: function (view, rem) {
@@ -184,10 +245,14 @@
         }, 250);
       },
       markPlayed: function (id) {
-        played[id] = true;
+        DATA.played[id] = true;
         sb.from('played').upsert({ qid: id }, { ignoreDuplicates: true }).then(function () {});
       },
-      getPlayed: function () { return played; }
+      getPlayed: function () { return DATA.played; },
+      getExcluded: function () { return DATA.reports; },
+      recordGame: function (players) {
+        sb.from('games').insert({ code: code, players: players }).then(function () { loadSeason(); });
+      }
     });
   }
 
@@ -362,6 +427,8 @@
   function renderPhone() {
     var S = C.S, p = findP(me.pid);
     if (!p || C.editing) return phoneJoin();
+    if (S.phase !== 'lobby') C.screen = null;
+    if (S.phase === 'lobby' && C.screen) return phoneScreen();
     if (S.phase === 'lobby') return phoneLobby();
     if (S.phase === 'draw') return phoneDraw();
     if (S.phase === 'question') return phoneQuestion();
@@ -493,7 +560,10 @@
       qr + '<div class="pgrid">' + chips + '</div>' + settings +
       '<div class="grow"></div>' +
       (cap ? startBlock(S) : '') +
-      '<div class="links"><button class="linkbtn" id="edit">Modifier mon profil</button><button class="linkbtn" id="quit">Quitter</button></div></div>')) return;
+      '<div class="pills">' + (cap ? '<button type="button" id="cfg">Réglages</button>' : '') + '<button type="button" id="season">Saison</button>' +
+      '<button type="button" id="edit">Profil</button><button type="button" id="quit">Quitter</button></div></div>')) return;
+    on('cfg', 'click', function () { C.screen = 'settings'; C.view = ''; render(); });
+    on('season', 'click', function () { C.screen = 'season'; C.view = ''; loadSeason(); render(); });
 
     on('seg', 'click', function (e) {
       var n = e.target.getAttribute && e.target.getAttribute('data-n');
@@ -514,6 +584,132 @@
     on('start', 'click', function () { keepAwake(); send({ t: 'cmd', cmd: 'start', settings: st }); });
     on('edit', 'click', function () { C.editing = true; C.view = ''; render(); });
     on('quit', 'click', leave);
+  }
+
+  function seg(id, items, cur) {
+    return '<div class="seg" id="' + id + '">' + items.map(function (it) {
+      return '<button type="button" data-v="' + it[0] + '" class="' + (String(cur) === String(it[0]) ? 'on' : '') + '">' + it[1] + '</button>';
+    }).join('') + '</div>';
+  }
+
+  function phoneScreen() {
+    if (C.screen === 'settings' && C.S.captain === me.pid) return phoneSettings();
+    if (C.screen === 'questions' && C.S.captain === me.pid) return phoneQuestions();
+    if (C.screen === 'season') return phoneSeason();
+    C.screen = null;
+    return phoneLobby();
+  }
+
+  function screenHead(title) {
+    return '<div class="hd"><h1 class="title" style="font-size:26px">' + esc(title) + '</h1><button type="button" class="qx" id="back" aria-label="Retour">' +
+      '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button></div>';
+  }
+
+  function backToLobby() { C.screen = null; C.view = ''; render(); }
+
+  function phoneSettings() {
+    var st = C.S.settings, freq = st.freq || {};
+    var rows = st.games.map(function (g) {
+      return '<div class="frow"><span>' + esc(GAMES[g].name) + '</span>' + seg('f-' + g, [[0, 'Peu'], [1, 'Normal'], [2, 'Beaucoup']], freq[g] != null ? freq[g] : 1) + '</div>';
+    }).join('');
+    if (!setView('settings|' + JSON.stringify(st), '<div class="ph">' + screenHead('Réglages de la partie') +
+      '<div class="setgrid">' +
+      '<span class="label">Mode</span>' + seg('s-mode', [['zapping', 'Zapping'], ['manches', 'Par manches']], st.mode || 'zapping') +
+      '<span class="label">Épreuves</span>' + seg('s-count', [[10, '10'], [15, '15'], [25, '25'], [40, '40']], st.count) +
+      '<span class="label">Rythme</span>' + seg('s-pace', [['calme', 'Calme'], ['normal', 'Normal'], ['rapide', 'Rapide']], st.pace || 'normal') +
+      '<span class="label">Difficulté</span>' + seg('s-diff', [['facile', 'Facile'], ['mixte', 'Mixte'], ['difficile', 'Difficile']], st.diff || 'mixte') +
+      '</div>' +
+      '<div class="toggles"><button type="button" class="tog' + (st.finale ? ' on' : '') + '" id="s-fin">Finale ×2</button>' +
+      '<button type="button" class="tog' + (st.teams ? ' on' : '') + '" id="s-teams">2 équipes</button></div>' +
+      '<span class="label">Fréquence des jeux</span><div class="stack" style="gap:6px">' + rows + '</div>' +
+      '<div class="grow"></div><button class="btn ghost small" id="toq">Banque de questions</button><button class="btn" id="done">Valider</button></div>')) return;
+    function upd(patch) {
+      var n = JSON.parse(JSON.stringify(st));
+      for (var k in patch) n[k] = patch[k];
+      send({ t: 'cmd', cmd: 'settings', settings: n });
+    }
+    function bindSeg(id, fn) {
+      on(id, 'click', function (e) { var v = e.target.getAttribute && e.target.getAttribute('data-v'); if (v != null) fn(v); });
+    }
+    bindSeg('s-mode', function (v) { upd({ mode: v }); });
+    bindSeg('s-count', function (v) { upd({ count: Number(v) }); });
+    bindSeg('s-pace', function (v) { upd({ pace: v }); });
+    bindSeg('s-diff', function (v) { upd({ diff: v }); });
+    st.games.forEach(function (g) {
+      bindSeg('f-' + g, function (v) { var f = JSON.parse(JSON.stringify(freq)); f[g] = Number(v); upd({ freq: f }); });
+    });
+    on('s-fin', 'click', function () { upd({ finale: !st.finale }); });
+    on('s-teams', 'click', function () { upd({ teams: !st.teams }); });
+    on('toq', 'click', function () { C.screen = 'questions'; C.view = ''; loadPlayed(function () { loadReports(render); }); render(); });
+    on('done', 'click', backToLobby);
+    on('back', 'click', backToLobby);
+  }
+
+  function qLabel(g, q) {
+    if (g === 'pyramide' || g === 'croquis') return q.a;
+    return q.q;
+  }
+
+  function phoneQuestions() {
+    var rows = Object.keys(GAMES).map(function (g) {
+      var all = (QUESTIONS[g] || []).filter(function (q) { return !DATA.reports[q.id]; });
+      var done = all.filter(function (q) { return DATA.played[q.id]; }).length;
+      var pct = all.length ? Math.round(done / all.length * 100) : 0;
+      return '<div class="qrow"><div class="rowx" style="font-size:15px"><b style="color:var(--ink)">' + esc(GAMES[g].name) + '</b><span>' + done + ' / ' + all.length + ' joués</span></div>' +
+        '<div class="gauge"><i style="width:' + pct + '%"></i></div>' + (done ? '<button type="button" class="linkbtn small" data-reset="' + g + '">Remettre à zéro</button>' : '') + '</div>';
+    }).join('');
+    var reps = [];
+    Object.keys(GAMES).forEach(function (g) {
+      (QUESTIONS[g] || []).forEach(function (q) { if (DATA.reports[q.id]) reps.push({ id: q.id, t: qLabel(g, q), g: g }); });
+    });
+    var repHtml = reps.length ? reps.map(function (r) {
+      return '<div class="prow"><span class="n" style="font-size:14px;white-space:normal">' + esc(r.t) + '</span><button type="button" class="tog" data-restore="' + r.id + '">Rétablir</button></div>';
+    }).join('') : '<div class="muted" style="font-size:14px">Aucune question signalée.</div>';
+    if (!setView('questions|' + JSON.stringify([Object.keys(DATA.played).length, Object.keys(DATA.reports)]), '<div class="ph">' + screenHead('Banque de questions') +
+      '<div class="stack" id="qrows" style="gap:10px">' + rows + '</div>' +
+      '<span class="label">Questions signalées</span><div class="stack" id="reps" style="gap:6px">' + repHtml + '</div>' +
+      '<div class="grow"></div><button class="btn" id="done">Retour aux réglages</button></div>')) return;
+    on('qrows', 'click', function (e) {
+      var g = e.target.getAttribute && e.target.getAttribute('data-reset');
+      if (!g || !window.confirm('Remettre à zéro les questions déjà jouées de « ' + GAMES[g].name + ' » ?')) return;
+      sb.from('played').delete().like('qid', PREFIX[g] + '%').then(function () {
+        Object.keys(DATA.played).forEach(function (id) { if (id.indexOf(PREFIX[g]) === 0) delete DATA.played[id]; });
+        C.view = ''; render();
+      });
+    });
+    on('reps', 'click', function (e) {
+      var id = e.target.getAttribute && e.target.getAttribute('data-restore');
+      if (!id) return;
+      sb.from('reports').delete().eq('qid', id).then(function () { delete DATA.reports[id]; C.view = ''; render(); });
+    });
+    on('done', 'click', function () { C.screen = 'settings'; C.view = ''; render(); });
+    on('back', 'click', function () { C.screen = 'settings'; C.view = ''; render(); });
+  }
+
+  function phoneSeason() {
+    var se = DATA.season, cap = C.S.captain === me.pid;
+    var list = !se ? '<div class="muted">Chargement…</div>' : (se.rows.length ? se.rows.map(function (r, i) {
+      return '<div class="prow"><span class="muted" style="width:22px;font-weight:700">' + (i + 1) + '</span>' +
+        '<span class="av" style="width:34px;height:34px;font-size:15px;background:' + COLORS[r.color || 0] + '">' + esc(String(r.name).charAt(0).toUpperCase()) + '</span>' +
+        '<span class="n">' + esc(r.name) + '<span class="tag" style="display:block;font-size:12px;color:var(--muted);font-weight:500">' + r.games + ' partie' + (r.games > 1 ? 's' : '') + ' · ' + r.pts + ' pts</span></span>' +
+        '<span class="r">' + r.wins + ' <small style="font-size:12px;color:var(--muted)">vict.</small></span></div>';
+    }).join('') : '<div class="note">Aucune partie terminée pour l\'instant. La première victoire est à prendre !</div>');
+    var ctrl = cap && se ? '<div class="stack" style="gap:8px"><span class="label">Durée d\'une saison</span>' + seg('s-dur', [['1m', '1 mois'], ['3m', '3 mois'], ['all', 'Sans fin']], se.cfg.dur || '1m') +
+      '<button class="linkbtn small" id="sreset">Remettre la saison à zéro</button></div>' : '';
+    if (!setView('season|' + (se ? se.stamp : ''), '<div class="ph">' + screenHead(se ? se.label : 'Saison') +
+      '<div class="plist">' + list + '</div><div class="grow"></div>' + ctrl + '<button class="btn" id="done">Retour au salon</button></div>')) return;
+    function saveCfg(cfg) {
+      sb.from('meta').upsert({ key: 'season', value: cfg, updated_at: new Date().toISOString() }).then(function () { loadSeason(); });
+    }
+    on('s-dur', 'click', function (e) {
+      var v = e.target.getAttribute && e.target.getAttribute('data-v');
+      if (v) saveCfg({ dur: v, resetAt: se.cfg.resetAt || null });
+    });
+    on('sreset', 'click', function () {
+      if (window.confirm('Remettre le classement de la saison à zéro ?')) saveCfg({ dur: se.cfg.dur || '1m', resetAt: new Date().toISOString() });
+    });
+    on('done', 'click', backToLobby);
+    on('back', 'click', backToLobby);
   }
 
   function x2chip() { return C.S.mult > 1 ? ' <span class="chip x2">Finale ×2</span>' : ''; }
@@ -685,6 +881,20 @@
     });
   }
 
+  function teamTotals() {
+    var S = C.S, t = [{ pts: 0, names: [] }, { pts: 0, names: [] }], any = false;
+    S.players.forEach(function (p) { if (p.team === 0 || p.team === 1) { any = true; t[p.team].pts += p.score; t[p.team].names.push(p.name); } });
+    return any ? t : null;
+  }
+
+  function teamLine() {
+    var t = teamTotals();
+    if (!t) return '';
+    return '<div class="teams">' + t.map(function (x, i) {
+      return '<div class="team t' + i + '"><span>Équipe ' + 'AB'.charAt(i) + '</span><b>' + x.pts + '</b><small>' + esc(x.names.join(', ')) + '</small></div>';
+    }).join('') + '</div>';
+  }
+
   function rankingRows(withGain) {
     var res = C.S.result || {};
     return '<div class="plist">' + ranked().map(function (p, i) {
@@ -751,18 +961,33 @@
     var ctrl = S.captain === me.pid ?
       '<button class="btn" id="next">' + (last ? 'Voir le classement final' : 'Épreuve suivante') + '</button>' :
       '<div class="note">' + esc(capName()) + ' passe à la suite</div>';
-    if (!setView('rev|' + S.round, '<div class="ph">' + topbar() + verdict + extra + rankingRows(true) + '<div class="grow"></div>' + ctrl + '</div>')) return;
+    var reported = DATA.reports[cur.id];
+    if (!setView('rev|' + S.round, '<div class="ph">' + topbar() + verdict + extra + teamLine() + rankingRows(true) + '<div class="grow"></div>' + ctrl +
+      '<button class="linkbtn small" id="report"' + (reported ? ' disabled' : '') + '>' + (reported ? 'Question signalée ✓' : 'Signaler cette question') + '</button></div>')) return;
     on('next', 'click', function () { send({ t: 'cmd', cmd: 'next' }); });
+    on('report', 'click', function () {
+      DATA.reports[cur.id] = true;
+      sb.from('reports').upsert({ qid: cur.id }, { ignoreDuplicates: true }).then(function () {});
+      $('report').textContent = 'Question signalée ✓';
+      $('report').disabled = true;
+    });
   }
 
   function phoneFinal() {
     var S = C.S, rk = ranked(), pos = 1;
     for (var i = 0; i < rk.length; i++) if (rk[i].pid === me.pid) pos = i + 1;
     var ctrl = S.captain === me.pid ?
-      '<button class="btn" id="again">Revanche</button><button class="btn ghost" id="lobby">Retour au salon</button>' :
+      '<div class="duo-btns"><button class="btn ghost" id="lobby">Salon</button><button class="btn" id="again">Revanche</button></div>' :
       '<div class="note">' + esc(capName()) + ' choisit la suite</div>';
-    if (!setView('fin|' + JSON.stringify(S.players), '<div class="ph"><div class="verdict ' + (pos === 1 ? 'ok' : 'ko') + '"><span>Partie terminée</span><span class="big">' +
-      (pos === 1 ? 'Tu gagnes !' : 'Tu termines ' + ord(pos)) + '</span></div>' + rankingRows(false) + '<div class="grow"></div>' + ctrl +
+    var mine = (S.titles || {})[me.pid] || [];
+    var teams = teamTotals(), myP = findP(me.pid), head;
+    if (teams) {
+      var win = teams[0].pts === teams[1].pts ? -1 : (teams[0].pts > teams[1].pts ? 0 : 1);
+      head = win < 0 ? 'Égalité parfaite !' : (myP && myP.team === win ? 'Ton équipe gagne !' : 'Ton équipe a perdu');
+    } else head = pos === 1 ? 'Tu gagnes !' : 'Tu termines ' + ord(pos);
+    var titles = mine.length ? '<div class="titles">' + mine.map(function (t) { return '<div class="ttl"><b>' + esc(t.name) + '</b><span>' + esc(t.why) + '</span></div>'; }).join('') + '</div>' : '';
+    if (!setView('fin|' + JSON.stringify(S.players), '<div class="ph"><div class="verdict ' + ((teams ? head.indexOf('gagne') > 0 : pos === 1) ? 'ok' : 'ko') + '"><span>Partie terminée</span><span class="big">' +
+      head + '</span></div>' + titles + teamLine() + rankingRows(false) + '<div class="grow"></div>' + ctrl +
       '<button class="linkbtn" id="quit">Quitter la partie</button></div>')) return;
     on('again', 'click', function () { send({ t: 'cmd', cmd: 'rematch' }); });
     on('lobby', 'click', function () { send({ t: 'cmd', cmd: 'lobby' }); });
@@ -1015,7 +1240,7 @@
 
   function tvLobby() {
     var S = C.S, st = S.settings;
-    var key = 'tlobby|' + JSON.stringify([S.players, S.captain, st]);
+    var key = 'tlobby|' + JSON.stringify([S.players, S.captain, st]) + '|' + (DATA.season ? DATA.season.stamp : '');
     var rows = S.players.map(function (p) {
       return '<div class="prow2">' + avR(p, 3.4) + '<span style="flex:1">' + esc(p.name) + '</span>' +
         (p.pid === S.captain ? '<span class="chip" style="font-size:1rem">capitaine</span>' : '') + '</div>';
@@ -1025,6 +1250,10 @@
       st.games.map(function (g) { return '<span class="chip">' + esc(gameName(g)) + '</span>'; }).join('') +
       (st.finale ? '<span class="chip">Finale ×2</span>' : '');
     var who = S.captain ? esc(capName()) + ' lance la partie depuis son téléphone' : 'Le premier joueur arrivé lancera la partie';
+    if (DATA.season && DATA.season.rows.length) {
+      var top = DATA.season.rows[0];
+      who = esc(DATA.season.label) + ' · en tête : <b>' + esc(top.name) + '</b> (' + top.wins + ' victoire' + (top.wins > 1 ? 's' : '') + ')<br>' + who;
+    }
     var tiles = C.code.split('').map(function (c) { return '<span>' + c + '</span>'; }).join('');
     setView(key, '<div class="tvw"><div class="lobby"><div class="l">' +
       '<div><p class="brand-k">Soirée jeux</p><h1 class="brand">Soirée Canapé</h1></div>' +
@@ -1120,8 +1349,11 @@
   }
 
   function tvSide() {
-    var res = C.S.result || {};
-    return '<div class="side"><h3>Classement</h3>' + ranked().map(function (p, i) {
+    var res = C.S.result || {}, t = teamTotals();
+    var teams = t ? '<div style="display:flex;gap:.6rem;margin-bottom:.4rem">' + t.map(function (x, i) {
+      return '<div class="tteam t' + i + '"><span>Équipe ' + 'AB'.charAt(i) + '</span><b>' + x.pts + '</b></div>';
+    }).join('') + '</div>' : '';
+    return '<div class="side"><h3>Classement</h3>' + teams + ranked().map(function (p, i) {
       var g = res[p.pid] && res[p.pid].pts ? '+' + res[p.pid].pts : '';
       return '<div class="srow"><span class="muted" style="width:1.6rem">' + (i + 1) + '</span>' + avR(p, 2.6) + '<span class="n">' + esc(p.name) + '</span><span class="g">' + g + '</span><span class="p">' + p.score + '</span></div>';
     }).join('') + '</div>';
@@ -1205,15 +1437,20 @@
     // révélation à l'envers : du dernier au premier
     for (var i = n - 1; i >= 0; i--) {
       var p = rk[i], delay = (n - 1 - i) * 1.6;
+      var tt = ((S.titles || {})[p.pid] || []).map(function (t) { return t.name; }).join(' · ');
       html += '<div class="pod' + (i === 0 ? ' first' : '') + '" style="animation-delay:' + delay + 's"><span class="rk">' + (i + 1) + '</span>' + avR(p, i === 0 ? 4.4 : 3.2) +
-        '<span class="n">' + esc(p.name) + '</span><span class="s">' + p.score + ' pts</span></div>';
+        '<span class="n">' + esc(p.name) + (tt ? '<span class="ttl">' + esc(tt) + '</span>' : '') + '</span><span class="s">' + p.score + ' pts</span></div>';
     }
     var conf = '', start = n * 1.6;
     for (var k = 0; k < 40; k++) {
       conf += '<i style="left:' + (Math.random() * 100).toFixed(1) + '%;background:' + COLORS[k % COLORS.length] + ';animation-delay:' + (start + Math.random() * 3).toFixed(2) + 's"></i>';
     }
-    setView('tfin|' + JSON.stringify(S.players), '<div class="tvw"><h1 class="display" style="margin:0;font-size:3.4rem;text-align:center">Classement final</h1>' +
-      '<div class="podium">' + html + '</div><div class="muted" style="text-align:center;font-size:1.3rem">' + esc(capName()) + ' choisit : revanche ou retour au salon</div></div>' +
+    var t = teamTotals(), title = 'Classement final';
+    if (t) title = t[0].pts === t[1].pts ? 'Égalité entre les équipes !' : 'Victoire de l\'équipe ' + (t[0].pts > t[1].pts ? 'A' : 'B') + ' !';
+    var champ = DATA.season && DATA.season.rows.length ? DATA.season.label + ' · en tête : ' + DATA.season.rows[0].name + ' (' + DATA.season.rows[0].wins + ' victoire' + (DATA.season.rows[0].wins > 1 ? 's' : '') + ')' : '';
+    setView('tfin|' + JSON.stringify(S.players) + '|' + (DATA.season ? DATA.season.stamp : ''), '<div class="tvw"><h1 class="display" style="margin:0;font-size:3.4rem;text-align:center">' + esc(title) + '</h1>' +
+      (t ? '<div style="display:flex;gap:1rem;justify-content:center">' + t.map(function (x, i) { return '<div class="tteam t' + i + '"><span>Équipe ' + 'AB'.charAt(i) + ' · ' + esc(x.names.join(', ')) + '</span><b>' + x.pts + '</b></div>'; }).join('') + '</div>' : '') +
+      '<div class="podium">' + html + '</div><div class="muted" style="text-align:center;font-size:1.3rem">' + (champ ? esc(champ) + ' — ' : '') + esc(capName()) + ' choisit : revanche ou retour au salon</div></div>' +
       '<div class="confetti">' + conf + '</div>');
   }
 

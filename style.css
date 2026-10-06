@@ -150,6 +150,30 @@ button { cursor: pointer; }
 .guessrow .input { flex: 1; min-width: 0; height: 52px; font-size: 18px; }
 .guessrow .btn { min-height: 52px; padding: 0 20px; }
 
+/* Étape 4 : réglages, saison, titres, équipes */
+.pills { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.pills button { min-height: 38px; padding: 0 14px; border-radius: 999px; border: 2px solid var(--line); background: transparent; color: var(--muted); font-weight: 700; font-size: 14px; }
+.linkbtn.small { font-size: 13px; padding: 4px; align-self: center; }
+.linkbtn:disabled { text-decoration: none; opacity: 0.8; }
+.setgrid { display: grid; grid-template-columns: 82px minmax(0, 1fr); gap: 8px 10px; align-items: center; }
+.setgrid .seg button { font-size: 14px; min-height: 40px; padding: 0 4px; }
+.frow { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 8px; align-items: center; font-size: 14px; font-weight: 600; }
+.frow .seg button { font-size: 13px; min-height: 36px; padding: 0 2px; }
+.qrow { display: flex; flex-direction: column; gap: 4px; }
+.gauge { height: 8px; border-radius: 999px; background: var(--card); overflow: hidden; }
+.gauge > i { display: block; height: 100%; background: var(--accent); }
+.titles { display: flex; flex-direction: column; gap: 6px; }
+.ttl { display: flex; flex-direction: column; padding: 10px 14px; border-radius: 14px; background: var(--card2); }
+.ttl b { font-family: var(--display); font-size: 20px; }
+.ttl span { font-size: 13px; color: var(--muted); }
+.teams { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.team { border-radius: 14px; padding: 8px 12px; display: flex; flex-direction: column; background: var(--card); border: 2px solid var(--line); }
+.team span { font-size: 13px; color: var(--muted); font-weight: 700; }
+.team b { font-family: var(--display); font-size: 24px; }
+.team small { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.team.t0 { border-color: var(--accent); }
+.team.t1 { border-color: var(--good); }
+
 /* ---------- télé ---------- */
 body.tv { overflow: hidden; }
 .tvw { width: 100vw; height: 100vh; padding: 3.2rem 4rem; display: flex; flex-direction: column; gap: 2rem; }
@@ -256,3 +280,12 @@ body.tv { overflow: hidden; }
 .tvw .tvboard { width: 36rem; height: 36rem; aspect-ratio: auto; border-radius: 1.4rem; flex: none; }
 .tvw .cqrev { display: flex; gap: 2rem; align-items: flex-start; }
 .tvw .cqrev .board { width: 24rem; height: 24rem; aspect-ratio: auto; }
+
+/* Étape 4 (télé) */
+.tvw .pod .n { display: flex; flex-direction: column; line-height: 1.1; }
+.tvw .pod .ttl { background: none; padding: 0; font-size: 1.1rem; font-weight: 600; color: var(--accent); border-radius: 0; }
+.tvw .pod.first .ttl { color: #5B5470; }
+.tvw .tteam { flex: 1; border-radius: 1rem; padding: 0.6rem 1rem; background: var(--card); border: 2px solid var(--line); display: flex; justify-content: space-between; align-items: center; font-size: 1.2rem; gap: 1rem; }
+.tvw .tteam b { font-family: var(--display); font-size: 1.8rem; }
+.tvw .tteam.t0 { border-color: var(--accent); }
+.tvw .tteam.t1 { border-color: var(--good); }

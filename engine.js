@@ -83,12 +83,28 @@
   }
 
   // Ordre des épreuves : équilibré entre les jeux, jamais deux fois le même d'affilée.
-  function buildOrder(count, games) {
-    var per = {}, i, k = games.length;
-    for (i = 0; i < k; i++) per[games[i]] = Math.floor(count / k);
-    var extra = shuffle(games.slice()).slice(0, count - Math.floor(count / k) * k);
-    for (i = 0; i < extra.length; i++) per[extra[i]]++;
-    var order = [], last = null;
+  var PACE = { calme: 1.5, normal: 1, rapide: 0.7 };
+  var FREQ_W = [0.5, 1, 2];
+
+  // Nombre d'épreuves par jeu selon la fréquence choisie (peu / normal / beaucoup).
+  function countsFor(count, games, freq) {
+    var w = games.map(function (g) { return FREQ_W[freq && freq[g] != null ? freq[g] : 1]; });
+    var sum = w.reduce(function (a, b) { return a + b; }, 0), per = {}, given = 0;
+    var parts = games.map(function (g, i) { var x = count * w[i] / sum; per[g] = Math.floor(x); given += per[g]; return { g: g, r: x - per[g] }; });
+    shuffle(parts).sort(function (a, b) { return b.r - a.r; });
+    for (var i = 0; given < count; i = (i + 1) % parts.length) { per[parts[i].g]++; given++; }
+    return per;
+  }
+
+  // Ordre des épreuves. Zapping : mélangé, jamais deux fois le même jeu d'affilée.
+  // Manches : les épreuves d'un même jeu à la suite.
+  function buildOrder(count, games, freq, mode) {
+    var per = countsFor(count, games, freq), i, order = [];
+    if (mode === 'manches') {
+      shuffle(games.slice()).forEach(function (g) { for (var k = 0; k < per[g]; k++) order.push(g); });
+      return order;
+    }
+    var last = null;
     for (i = 0; i < count; i++) {
       var cands = games.filter(function (g) { return per[g] > 0 && g !== last; });
       if (!cands.length) cands = games.filter(function (g) { return per[g] > 0; });
@@ -100,20 +116,30 @@
     return order;
   }
 
-  // Questions : d'abord celles jamais jouées, puis les autres.
-  function buildDeck(count, games, bank, played) {
-    var order = buildOrder(count, games);
-    var pools = {};
+  function diffOk(q, diff) {
+    if (!q.d || !diff || diff === 'mixte') return true;
+    return diff === 'facile' ? q.d <= 2 : q.d >= 2;
+  }
+
+  // Questions : jamais jouées d'abord, puis les autres ; les questions signalées sont écartées.
+  function buildDeck(count, games, bank, played, o) {
+    o = o || {};
+    var excluded = o.excluded || {};
+    var order = buildOrder(count, games, o.freq, o.mode);
+    var pools = {}, used = {};
     function refill(g) {
-      var all = bank[g] || [];
-      var fresh = shuffle(all.filter(function (q) { return !played[q.id]; }));
-      var old = shuffle(all.filter(function (q) { return played[q.id]; }));
-      return fresh.concat(old);
+      var all = (bank[g] || []).filter(function (q) { return !excluded[q.id]; });
+      if (!all.length) all = (bank[g] || []).slice();
+      var good = all.filter(function (q) { return diffOk(q, o.diff); });
+      var rest = all.filter(function (q) { return !diffOk(q, o.diff); });
+      var pick = function (list) {
+        return shuffle(list.filter(function (q) { return !played[q.id]; })).concat(shuffle(list.filter(function (q) { return played[q.id]; })));
+      };
+      return pick(good).concat(pick(rest));
     }
-    var used = {};
     return order.map(function (g) {
       if (!pools[g] || !pools[g].length) pools[g] = refill(g).filter(function (q) { return !used[q.id]; });
-      if (!pools[g].length) pools[g] = shuffle((bank[g] || []).slice());
+      if (!pools[g].length) pools[g] = refill(g);
       var q = pools[g].shift();
       used[q.id] = true;
       return { g: g, id: q.id };
@@ -133,7 +159,7 @@
       phase: 'lobby',
       players: [],
       captain: null,
-      settings: { count: 15, games: ['culture', 'estimation', 'bluff', 'ordre', 'pyramide', 'croquis'], finale: true },
+      settings: sanitizeSettings({ count: 15, games: ['culture', 'estimation', 'bluff', 'ordre', 'pyramide', 'croquis'], finale: true }, {}),
       deck: [],
       round: 0,
       cur: null,
@@ -233,6 +259,12 @@
   };
 
   Engine.prototype.now = function () { return this.o.now ? this.o.now() : Date.now(); };
+
+  // Durée d'un chrono selon le rythme choisi (calme / normal / rapide).
+  Engine.prototype.dur = function (g, key) {
+    var pace = PACE[(this.s.settings || {}).pace] || 1;
+    return Math.round(GAMES[g][key || 'time'] * pace) * 1000;
+  };
 
   Engine.prototype.schedule = function (ms, fn) {
     var self = this;
@@ -417,13 +449,27 @@
     }
   };
 
+  function pickOf(v, list, def) { return list.indexOf(v) >= 0 ? v : def; }
+
   function sanitizeSettings(n, old) {
     n = n || {};
+    old = old || {};
     var count = Math.round(Number(n.count));
-    if (!(count >= 3 && count <= 40)) count = old.count;
+    if (!(count >= 3 && count <= 40)) count = old.count || 15;
     var games = Array.isArray(n.games) ? n.games.filter(function (g, i, a) { return GAMES.hasOwnProperty(g) && a.indexOf(g) === i; }) : old.games;
-    if (!games.length) games = old.games;
-    return { count: count, games: games, finale: n.finale === undefined ? old.finale : !!n.finale };
+    if (!games || !games.length) games = old.games || ['culture'];
+    var freq = {}, src = n.freq || old.freq || {};
+    Object.keys(GAMES).forEach(function (g) { var f = Number(src[g]); freq[g] = f === 0 || f === 2 ? f : 1; });
+    return {
+      count: count,
+      games: games,
+      finale: n.finale === undefined ? (old.finale !== false) : !!n.finale,
+      mode: pickOf(n.mode, ['zapping', 'manches'], old.mode || 'zapping'),
+      pace: pickOf(n.pace, ['calme', 'normal', 'rapide'], old.pace || 'normal'),
+      diff: pickOf(n.diff, ['facile', 'mixte', 'difficile'], old.diff || 'mixte'),
+      teams: n.teams === undefined ? !!old.teams : !!n.teams,
+      freq: freq
+    };
   }
 
   // L'appareil qui fait tourner la partie la ferme pour tout le monde.
@@ -442,7 +488,16 @@
     var games = s.settings.games.filter(function (g) { return !GAMES[g].min || n >= GAMES[g].min; });
     if (!games.length) return; // aucun jeu jouable avec ce nombre de joueurs : on reste au salon
     s.roles = {};
-    s.deck = buildDeck(s.settings.count, games, this.o.bank, played);
+    s.stats = {};
+    s.titles = null;
+    s.recorded = false;
+    s.players.forEach(function (p) { s.stats[p.pid] = newStats(); delete p.team; });
+    if (s.settings.teams && s.players.length >= 2) {
+      shuffle(s.players.slice()).forEach(function (p, i) { p.team = i % 2; });
+    }
+    var excluded = this.o.getExcluded ? this.o.getExcluded() : {};
+    s.deck = buildDeck(s.settings.count, games, this.o.bank, played,
+      { excluded: excluded, freq: s.settings.freq, mode: s.settings.mode, diff: s.settings.diff });
     s.round = 0;
     s.result = null;
     this.nextRound();
@@ -462,6 +517,11 @@
     if (s.round > s.deck.length) {
       this.cancel();
       s.phase = 'final';
+      s.titles = computeTitles(s);
+      if (!s.recorded && this.o.recordGame && s.players.length) {
+        s.recorded = true;
+        this.o.recordGame(s.players.map(function (p) { return { name: p.name, color: p.color, score: p.score, team: p.team }; }));
+      }
       this.publish();
       return;
     }
@@ -478,7 +538,7 @@
     if (GAMES[item.g].min && s.players.length < GAMES[item.g].min) return this.nextRound();
     var q = findQuestion(this.o.bank, item.g, item.id);
     var now = this.now();
-    var time = GAMES[item.g].time * 1000;
+    var time = this.dur(item.g);
     s.cur = { g: item.g, id: item.id, q: q.q, a: q.a, startedAt: now, deadline: now + time, time: time };
     if (item.g === 'culture') s.cur.c = q.c;
     if (item.g === 'estimation') s.cur.u = q.u || '';
@@ -498,7 +558,7 @@
       s.cur.step = 'announce';
       s.cur.n = null;
       s.cur.playTime = time;
-      time = GAMES.pyramide.announceTime * 1000;
+      time = this.dur('pyramide', 'announceTime');
       s.cur.deadline = now + time;
       s.cur.time = time;
     }
@@ -625,12 +685,57 @@
   };
 
   Engine.prototype.finish = function (res) {
-    var s = this.s;
+    var s = this.s, cur = s.cur;
     s.players.forEach(function (p) { if (res[p.pid]) p.score += res[p.pid].pts; });
+    // statistiques pour les titres de fin de partie
+    s.stats = s.stats || {};
+    Object.keys(res).forEach(function (pid) {
+      var st = s.stats[pid] || (s.stats[pid] = newStats()), r = res[pid];
+      st.byGame[cur.g] = (st.byGame[cur.g] || 0) + (r.pts || 0);
+      if (cur.g === 'culture' && r.fast) st.fast++;
+      if (cur.g === 'estimation' && r.v != null && r.rank === 0) st.estWin++;
+      if (cur.g === 'bluff') st.fooled += r.fooled || 0;
+      if (cur.g === 'ordre') st.ordre += r.good || 0;
+      if (cur.g === 'croquis' && r.role === 'drawer') st.drawn += r.finders || 0;
+      if (cur.g === 'croquis' && r.found) st.guessed++;
+      if (cur.g === 'pyramide' && r.role === 'giver' && cur.n === 1) st.kamikaze++;
+    });
     s.result = res;
     s.phase = 'reveal';
     this.publish();
   };
+
+  function newStats() { return { byGame: {}, fast: 0, estWin: 0, fooled: 0, ordre: 0, drawn: 0, guessed: 0, kamikaze: 0 }; }
+
+  var TITLES = [
+    { k: 'fooled', name: 'Le Mytho', why: 'a piégé le plus de monde au Bluff' },
+    { k: 'drawn', name: 'Picasso', why: 'ses dessins ont été les plus trouvés' },
+    { k: 'estWin', name: 'La Calculette', why: 'le plus précis aux estimations' },
+    { k: 'kamikaze', name: 'Le Kamikaze', why: 'a tenté « 1 indice » le plus souvent' },
+    { k: 'fast', name: 'L\'Éclair', why: 'le plus rapide en Culture G' },
+    { k: 'ordre', name: 'L\'Historien', why: 'le meilleur à Dans l\'ordre' },
+    { k: 'guessed', name: 'Le Devin', why: 'a deviné le plus de croquis' }
+  ];
+
+  // Chaque joueur repart avec au moins un titre.
+  function computeTitles(s) {
+    var out = {}, stats = s.stats || {};
+    s.players.forEach(function (p) { out[p.pid] = []; });
+    TITLES.forEach(function (t) {
+      var max = 0;
+      s.players.forEach(function (p) { var v = (stats[p.pid] || {})[t.k] || 0; if (v > max) max = v; });
+      if (!max) return;
+      s.players.forEach(function (p) { if (((stats[p.pid] || {})[t.k] || 0) === max) out[p.pid].push({ name: t.name, why: t.why }); });
+    });
+    s.players.forEach(function (p) {
+      if (out[p.pid].length) return;
+      var by = (stats[p.pid] || {}).byGame || {}, best = null;
+      Object.keys(by).forEach(function (g) { if (by[g] > 0 && (!best || by[g] > by[best])) best = g; });
+      out[p.pid].push(best ? { name: 'Spécialiste ' + GAMES[best].name, why: 'son meilleur jeu ce soir' } :
+        { name: 'Le Touriste', why: 'surtout là pour l\'ambiance' });
+    });
+    return out;
+  }
 
   // Présentation homogène des réponses : majuscule au début, pas de point final.
   function tidy(t) {
@@ -649,7 +754,7 @@
     s.votes = {};
     s.reject = {};
     if (opts.length < 2) return this.closeVote();
-    var time = GAMES.bluff.voteTime * 1000;
+    var time = this.dur('bluff', 'voteTime');
     s.cur.deadline = now + time;
     s.cur.time = time;
     s.phase = 'vote';
@@ -687,7 +792,7 @@
     this.finish(res);
   };
 
-  var api = { nearMiss: nearMiss, Engine: Engine, GAMES: GAMES, newState: newState, publicView: publicView, buildDeck: buildDeck, buildOrder: buildOrder, similar: similar, normText: normText, containsTruth: containsTruth };
+  var api = { sanitizeSettings: sanitizeSettings, computeTitles: computeTitles, countsFor: countsFor, nearMiss: nearMiss, Engine: Engine, GAMES: GAMES, newState: newState, publicView: publicView, buildDeck: buildDeck, buildOrder: buildOrder, similar: similar, normText: normText, containsTruth: containsTruth };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.SCEngine = api;
 })(this);
