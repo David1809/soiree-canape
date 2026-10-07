@@ -1310,7 +1310,7 @@
           '<div class="guessrow"><input id="gs" class="input" maxlength="30" autocomplete="off" placeholder="Ta proposition"><button class="btn" id="gsend" style="width:auto">OK</button></div>') +
         '<div class="note" id="stat"></div>';
     }
-    var fresh = setView(key, '<div class="ph">' + headRow('Croquis') + body + '</div>');
+    var fresh = setView(key, '<div class="ph">' + topbar() + headRow('Croquis') + body + '</div>');
     // mises à jour sans effacer le dessin ni la saisie
     var nf = (cur.found || []).length, guessers = S.players.filter(function (p) { return p.pid !== cur.drawer && !p.off; }).length;
     var fb = (S.fb || {})[me.pid];
