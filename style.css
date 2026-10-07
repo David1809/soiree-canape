@@ -477,3 +477,13 @@ body.tv { overflow: hidden; background-size: 2rem 2rem; }
 .tcol.t1 { background: #DCEBF7; }
 .tcol .tp { width: 100%; font: inherit; color: var(--ink); text-align: left; gap: 8px; padding: 6px 8px; }
 .tcol .tp .n { font-size: 15px; }
+
+/* Questions en ligne (OpenQuizzDB) : anecdote et crédit */
+.anec { background: var(--paper); border: 3px dashed var(--ink); border-radius: 14px; padding: 10px 12px; font-size: 14px; line-height: 1.35; }
+.anec p { margin: 0 0 6px; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.anec p:last-child { margin-bottom: 0; }
+.credit { font-size: 11.5px; color: var(--muted); }
+.credit a { color: inherit; }
+.anec.tv { font-size: 1.25rem; padding: .9rem 1.1rem; border-radius: 1rem; margin-top: auto; }
+.anec.tv p { -webkit-line-clamp: 6; margin-bottom: .5rem; }
+.anec.tv .credit { font-size: 1rem; }

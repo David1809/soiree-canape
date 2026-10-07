@@ -248,9 +248,15 @@
             .then(function (r) { if (r.error) console.warn('persist', r.error); });
         }, 250);
       },
-      markPlayed: function (id) {
+      markPlayed: function (id, names) {
         DATA.played[id] = true;
-        sb.from('played').upsert({ qid: id }, { ignoreDuplicates: true }).then(function () {});
+        if (id.indexOf('oq') !== 0) sb.from('played').upsert({ qid: id }, { ignoreDuplicates: true }).then(function () {});
+        if (names && names.length) sb.rpc('mark_seen', { p_players: names, p_qid: id }).then(function () {}, function () {});
+      },
+      // Lot de questions en ligne (OpenQuizzDB) tiré pour le salon : jamais vues par ses joueurs en priorité
+      prepare: function (req, done) {
+        sb.rpc('draw_pack', { p_players: req.players, p_culture: req.culture, p_estimation: req.estimation, p_diff: req.diff || 'mixte' })
+          .then(function (r) { done(r && !r.error ? r.data : null); }, function () { done(null); });
       },
       getPlayed: function () { return DATA.played; },
       getExcluded: function () { return DATA.reports; },
@@ -647,12 +653,13 @@
       note = '<div class="note warn">' + ko.map(function (g) { return esc(GAMES[g].name); }).join(' et ') +
         (ko.length > 1 ? ' se jouent' : ' se joue') + ' à 2 joueurs minimum' + (ok.length ? ' : ' + (ko.length > 1 ? 'ils seront sautés' : 'il sera sauté') + '.' : '. Attends un autre joueur.') + '</div>';
     }
+    if (S.preparing) return note + '<button class="btn" id="start" disabled>Préparation des questions…</button>';
     return note + '<button class="btn" id="start"' + (ok.length ? '' : ' disabled') + '>Lancer la partie</button>';
   }
 
   function phoneLobby() {
     var S = C.S, cap = S.captain === me.pid, st = S.settings;
-    var key = 'lobby|' + JSON.stringify([S.players, S.captain, st]);
+    var key = 'lobby|' + JSON.stringify([S.players, S.captain, st, !!S.preparing]);
     var tf = st.teams ? SCEngine.teamsFor(S.players, st.teamOf) : null;
     var chips = S.players.map(function (p) {
       var tag = p.pid === S.captain ? 'capitaine' : (p.pid === me.pid ? 'toi' : '');
@@ -749,7 +756,9 @@
       '<div class="toggles"><button type="button" class="tog' + (st.finale ? ' on' : '') + '" id="s-fin">Finale ×2</button>' +
       '<button type="button" class="tog' + (st.teams ? ' on' : '') + '" id="s-teams">2 équipes</button>' +
       (st.teams ? '<button type="button" class="tog" id="s-compo">Composer les équipes</button>' : '') +
-      '<button type="button" class="tog' + (st.sound !== false ? ' on' : '') + '" id="s-sound">Sons</button></div>' +
+      '<button type="button" class="tog' + (st.sound !== false ? ' on' : '') + '" id="s-sound">Sons</button>' +
+      '<button type="button" class="tog' + (st.online !== false ? ' on' : '') + '" id="s-online">Questions en ligne</button></div>' +
+      '<div class="muted" style="font-size:12.5px;margin-top:-4px">Questions en ligne : Culture G et Estimation piochent aussi dans une réserve OpenQuizzDB, sans reprendre celles que vous avez déjà vues.</div>' +
       '<button class="btn ghost small" id="topick">Choisir les jeux et leur fréquence</button>' +
       '<div class="grow"></div><button class="btn ghost small" id="toq">Banque de questions</button><button class="btn" id="done">Valider</button></div>')) return;
     function upd(patch) {
@@ -769,7 +778,13 @@
     on('s-teams', 'click', function () { upd({ teams: !st.teams }); });
     on('s-compo', 'click', function () { C.screen = 'teams'; C.view = ''; render(); });
     on('s-sound', 'click', function () { upd({ sound: st.sound === false }); });
-    on('toq', 'click', function () { C.screen = 'questions'; C.view = ''; loadPlayed(function () { loadReports(render); }); render(); });
+    on('s-online', 'click', function () { upd({ online: st.online === false }); });
+    on('toq', 'click', function () {
+      C.screen = 'questions'; C.view = ''; loadPlayed(function () { loadReports(render); }); render();
+      sb.rpc('pool_stats', { p_players: C.S.players.map(function (p) { return p.name; }) }).then(function (r) {
+        if (r && r.data) { DATA.pool = r.data; if (C.screen === 'questions') render(); }
+      }, function () {});
+    });
     on('done', 'click', backToLobby);
     on('back', 'click', backToLobby);
   }
@@ -871,8 +886,12 @@
     var repHtml = reps.length ? reps.map(function (r) {
       return '<div class="prow"><span class="n" style="font-size:14px;white-space:normal">' + esc(r.t) + '</span><button type="button" class="tog" data-restore="' + r.id + '">Rétablir</button></div>';
     }).join('') : '<div class="muted" style="font-size:14px">Aucune question signalée.</div>';
-    if (!setView('questions|' + JSON.stringify([Object.keys(DATA.played).length, Object.keys(DATA.reports)]), '<div class="ph">' + screenHead('Banque de questions') +
-      '<div class="stack" id="qrows" style="gap:10px">' + rows + '</div>' +
+    var po = DATA.pool, online = '<div class="qrow"><div class="rowx" style="font-size:15px"><b style="color:var(--ink)">Réserve en ligne</b><span>' +
+      (po ? po.culture + ' Culture G · ' + po.estimation + ' Estimation' : 'chargement…') + '</span></div>' +
+      (po ? '<div class="muted" style="font-size:13px">' + po.unseen + ' jamais vues par ce salon · ' + po.quizzes + ' quiz récupérés sur ' + po.catalog + ', la réserve se complète toute seule</div>' : '') +
+      '<div class="credit">Questions <a href="https://www.openquizzdb.org" target="_blank" rel="noopener">OpenQuizzDB</a>, licence CC BY-SA 4.0</div></div>';
+    if (!setView('questions|' + JSON.stringify([Object.keys(DATA.played).length, Object.keys(DATA.reports), po]), '<div class="ph">' + screenHead('Banque de questions') +
+      online + '<div class="stack" id="qrows" style="gap:10px">' + rows + '</div>' +
       '<span class="label">Questions signalées</span><div class="stack" id="reps" style="gap:6px">' + repHtml + '</div>' +
       '<div class="grow"></div><button class="btn" id="done">Retour aux réglages</button></div>')) return;
     on('qrows', 'click', function (e) {
@@ -1148,6 +1167,14 @@
     }).join('') + '</div>';
   }
 
+  // Questions OpenQuizzDB : anecdote et crédit obligatoire (licence CC BY-SA 4.0)
+  function infoBlock(cur, tv) {
+    if (!cur.info && !cur.src) return '';
+    var credit = cur.src ? '<div class="credit">Question ' + esc(cur.src.n || 'OpenQuizzDB') + (cur.src.by ? ' · ' + esc(cur.src.by) : '') +
+      ' · <a href="https://www.openquizzdb.org" target="_blank" rel="noopener">openquizzdb.org</a> · CC BY-SA 4.0</div>' : '';
+    return '<div class="anec' + (tv ? ' tv' : '') + '">' + (cur.info ? '<p><b>Le saviez-vous ?</b> ' + esc(cur.info) + '</p>' : '') + credit + '</div>';
+  }
+
   function phoneReveal() {
     var S = C.S, cur = S.cur, r = (S.result || {})[me.pid] || { v: null, pts: 0 };
     var verdict = '', extra = '';
@@ -1208,7 +1235,7 @@
       '<button class="btn" id="next">' + (last ? 'Voir le classement final' : 'Épreuve suivante') + '</button>' :
       '<div class="note">' + esc(capName()) + ' passe à la suite</div>';
     var reported = DATA.reports[cur.id];
-    if (!setView('rev|' + S.round, '<div class="ph">' + topbar() + verdict + extra + teamLine() + rankingRows(true) + '<div class="grow"></div>' + ctrl +
+    if (!setView('rev|' + S.round, '<div class="ph">' + topbar() + verdict + extra + infoBlock(cur, false) + teamLine() + rankingRows(true) + '<div class="grow"></div>' + ctrl +
       '<button class="linkbtn small" id="report"' + (reported ? ' disabled' : '') + '>' + (reported ? 'Question signalée ✓' : 'Signaler cette question') + '</button></div>')) return;
     on('next', 'click', function () { send({ t: 'cmd', cmd: 'next' }); });
     on('report', 'click', function () {
@@ -1812,7 +1839,7 @@
 
   function tvLobby() {
     var S = C.S, st = S.settings;
-    var key = 'tlobby|' + JSON.stringify([S.players, S.captain, st]) + '|' + (DATA.season ? DATA.season.stamp : '');
+    var key = 'tlobby|' + JSON.stringify([S.players, S.captain, st, !!S.preparing]) + '|' + (DATA.season ? DATA.season.stamp : '');
     var rows = S.players.map(function (p) {
       return '<div class="prow2">' + avR(p, 3.4) + '<span style="flex:1">' + esc(p.name) + '</span>' +
         (p.pid === S.captain ? '<span class="chip" style="font-size:1rem">capitaine</span>' : '') + '</div>';
@@ -1825,6 +1852,7 @@
       (st.teams ? '<span class="chip">2 équipes</span>' : '') +
       (st.finale ? '<span class="chip">Finale ×2</span>' : '');
     var who = S.captain ? esc(capName()) + ' lance la partie depuis son téléphone' : 'Le premier joueur arrivé lancera la partie';
+    if (S.preparing) who = '<b>Préparation des questions…</b>';
     if (DATA.season && DATA.season.rows.length) {
       var top = DATA.season.rows[0];
       who = esc(DATA.season.label) + ' · en tête : <b>' + esc(top.name) + '</b> (' + top.wins + ' victoire' + (top.wins > 1 ? 's' : '') + ')<br>' + who;
@@ -2080,7 +2108,7 @@
     $('who').innerHTML = tvWho('Ont voté');
   }
 
-  function tvSide() {
+  function tvSide(extra) {
     var res = C.S.result || {}, t = teamTotals();
     var teams = t ? '<div style="display:flex;gap:.6rem;margin-bottom:.4rem">' + t.map(function (x, i) {
       return '<div class="tteam t' + i + '"><span>Équipe ' + 'AB'.charAt(i) + '</span><b>' + x.pts + '</b></div>';
@@ -2088,7 +2116,7 @@
     return '<div class="side"><h3>Classement</h3>' + teams + ranked().map(function (p, i) {
       var g = res[p.pid] && res[p.pid].pts ? '+' + res[p.pid].pts : '';
       return '<div class="srow"><span class="muted" style="width:1.6rem">' + (i + 1) + '</span>' + avR(p, 2.6) + '<span class="n">' + esc(p.name) + '</span><span class="g">' + g + '</span><span class="p">' + p.score + '</span></div>';
-    }).join('') + '</div>';
+    }).join('') + (extra || '') + '</div>';
   }
 
   function tvReveal() {
@@ -2167,7 +2195,7 @@
     }
     setView('trev|' + S.round, '<div class="tvw"><div class="split"><div style="flex:1;display:flex;flex-direction:column;gap:1.6rem;min-width:0">' + tvBar(false) +
       '<h1 class="q" style="font-size:2.4rem">' + esc(cur.q) + '</h1>' + body +
-      '<div class="foot muted">' + esc(capName()) + ' lance ' + next + ' depuis son téléphone</div></div>' + tvSide() + '</div></div>');
+      '<div class="foot muted">' + esc(capName()) + ' lance ' + next + ' depuis son téléphone</div></div>' + tvSide(infoBlock(cur, true)) + '</div></div>');
   }
 
   function tvFinal() {

@@ -167,8 +167,12 @@
       if (!all.length) all = (bank[g] || []).slice();
       var good = all.filter(function (q) { return diffOk(q, o.diff); });
       var rest = all.filter(function (q) { return !diffOk(q, o.diff); });
+      var prefer = o.prefer || {};
       var pick = function (list) {
-        return shuffle(list.filter(function (q) { return !played[q.id]; })).concat(shuffle(list.filter(function (q) { return played[q.id]; })));
+        // lot en ligne (jamais vu par les joueurs du salon) en alternance avec les questions locales jamais jouées
+        var online = shuffle(list.filter(function (q) { return prefer[q.id] && !played[q.id]; }));
+        var fresh = shuffle(list.filter(function (q) { return !prefer[q.id] && !played[q.id]; }));
+        return interleave(online, fresh).concat(shuffle(list.filter(function (q) { return played[q.id]; })));
       };
       return pick(good).concat(pick(rest));
     }
@@ -179,6 +183,38 @@
       used[q.id] = true;
       return { g: g, id: q.id };
     });
+  }
+
+  function interleave(a, b) {
+    var out = [], i = 0;
+    for (; i < a.length || i < b.length; i++) { if (i < a.length) out.push(a[i]); if (i < b.length) out.push(b[i]); }
+    return out;
+  }
+
+  // ---------- Lot de questions en ligne (OpenQuizzDB, via Supabase) ----------
+  var PACK_GAMES = { culture: 1, estimation: 1 };
+  function cleanPack(list) {
+    var out = {}, n = 0;
+    if (!Array.isArray(list)) return null;
+    list.slice(0, 80).forEach(function (x) {
+      if (!x || typeof x.id !== 'string' || x.id.indexOf('oq') !== 0 || !PACK_GAMES[x.g] || typeof x.q !== 'string') return;
+      var q = { id: x.id.slice(0, 40), d: x.d === 1 || x.d === 3 ? x.d : 2, q: x.q.slice(0, 200) };
+      if (x.g === 'culture') {
+        if (!Array.isArray(x.c) || x.c.length !== 4 || !(x.a >= 0 && x.a <= 3 && x.a === Math.floor(x.a))) return;
+        q.c = x.c.map(function (c) { return String(c).slice(0, 60); });
+        q.a = x.a;
+      } else {
+        var a = Number(x.a);
+        if (!isFinite(a)) return;
+        q.a = a;
+        q.u = typeof x.u === 'string' ? x.u.slice(0, 30) : '';
+      }
+      if (typeof x.info === 'string' && x.info) q.info = x.info.slice(0, 300);
+      if (x.src && typeof x.src === 'object') q.src = { n: String(x.src.n || 'OpenQuizzDB').slice(0, 30), by: String(x.src.by || '').slice(0, 80), t: String(x.src.t || '').slice(0, 120) };
+      (out[x.g] = out[x.g] || []).push(q);
+      n++;
+    });
+    return n ? out : null;
   }
 
   // Finale (points doubles) : jamais un jeu où seuls deux joueurs jouent.
@@ -243,7 +279,8 @@
     return t.charAt(0);
   }
 
-  function findQuestion(bank, g, id) {
+  function findQuestion(bank, g, id, pack) {
+    if (pack && pack[g]) for (var j = 0; j < pack[g].length; j++) if (pack[g][j].id === id) return pack[g][j];
     var list = bank[g] || [];
     for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i];
     return null;
@@ -272,11 +309,12 @@
   // ni la bonne réponse ni les réponses des autres.
   function publicView(s) {
     var p = clone(s);
+    delete p.pack;
     p.deck = s.deck.map(function (d) { return d.g; });
     if (p.phase === 'question' || p.phase === 'vote') {
       if (p.cur) {
         delete p.cur.a; delete p.cur.alt; delete p.cur.order; delete p.cur.vals;
-        delete p.cur.k; delete p.cur.c2; delete p.cur.ans;
+        delete p.cur.k; delete p.cur.c2; delete p.cur.ans; delete p.cur.info;
         // Mémoire flash : la grille disparaît quand vient la question
         if (p.cur.g === 'memoire' && p.cur.step === 'ask') delete p.cur.grid;
         if (p.cur.g === 'memoire' && p.cur.step === 'show') delete p.cur.target;
@@ -311,10 +349,9 @@
     //        markPlayed(id), getPlayed() -> {id:true}, now(), setTimeout, clearTimeout
     this.o = opts;
     this.s = opts.state || newState(opts.code, opts.hasTv);
-    // partie sauvegardée avec un jeu qui n'existe plus (ex. Punchline) : on nettoie les réglages
+    // partie enregistrée avec une ancienne version (jeu supprimé depuis, par ex. Punchline) : on nettoie les réglages
     this.s.settings = sanitizeSettings(this.s.settings || {}, {});
-    // partie enregistrée avec une ancienne version (jeu supprimé depuis, par ex. Punchline)
-    this.s.settings = sanitizeSettings(this.s.settings || {}, {});
+    delete this.s.preparing; // préparation interrompue (l'hôte a changé) : on la relancera
     this.timer = null;
     this.seen = {};
     var self = this, now = this.now();
@@ -367,6 +404,7 @@
     var s = this.s;
     this.cancel();
     if (dropGone) s.players = s.players.filter(function (p) { return !p.off; });
+    this.prepToken = null; delete s.preparing;
     s.phase = 'lobby'; s.round = 0; s.deck = []; s.cur = null; s.answers = {}; s.result = null;
     s.votes = {}; s.options = null; s.reject = {};
     s.players.forEach(function (p) { p.score = 0; });
@@ -624,13 +662,13 @@
       case 'start':
         if (s.phase !== 'lobby' || !s.players.length) return;
         if (m.settings) s.settings = sanitizeSettings(m.settings, s.settings);
-        this.startGame();
+        this.begin();
         break;
       case 'next':
         if (s.phase === 'reveal') this.nextRound();
         break;
       case 'rematch':
-        if (s.phase === 'final') this.startGame();
+        if (s.phase === 'final') this.begin();
         break;
       case 'lobby':
         if (s.phase === 'final' || s.phase === 'reveal') {
@@ -662,6 +700,7 @@
       teams: n.teams === undefined ? !!old.teams : !!n.teams,
       teamOf: cleanTeamOf(n.teamOf === undefined ? old.teamOf : n.teamOf),
       sound: n.sound === undefined ? old.sound !== false : !!n.sound,
+      online: n.online === undefined ? old.online !== false : !!n.online,
       freq: freq
     };
   }
@@ -695,6 +734,37 @@
     this.publish();
   };
 
+  var PREP_MS = 6000;
+  Engine.prototype.begin = function () {
+    var self = this, s = this.s, phase = s.phase;
+    if (s.preparing) return;
+    var n = s.players.length;
+    var want = s.settings.games.filter(function (g) { return PACK_GAMES[g] && (!GAMES[g].min || n >= GAMES[g].min); });
+    if (!this.o.prepare || s.settings.online === false || !want.length) { s.pack = null; return this.startGame(); }
+    var token = this.prepToken = {};
+    s.preparing = true;
+    this.publish(false);
+    var per = Math.min(20, s.settings.count);
+    var finish = function (list) {
+      if (token !== self.prepToken) return;
+      self.prepToken = null;
+      self.cancel();
+      delete s.preparing;
+      if (s.phase !== phase) { self.publish(); return; }
+      s.pack = cleanPack(list);
+      self.startGame();
+    };
+    this.schedule(PREP_MS, function () { finish(null); });
+    try {
+      this.o.prepare({
+        players: s.players.map(function (p) { return p.name; }),
+        culture: want.indexOf('culture') >= 0 ? per : 0,
+        estimation: want.indexOf('estimation') >= 0 ? per : 0,
+        diff: s.settings.diff
+      }, finish);
+    } catch (e) { finish(null); }
+  };
+
   Engine.prototype.startGame = function () {
     var s = this.s;
     s.players.forEach(function (p) { p.score = 0; });
@@ -712,8 +782,23 @@
       s.players.forEach(function (p) { p.team = tf[p.pid]; });
     }
     var excluded = this.o.getExcluded ? this.o.getExcluded() : {};
-    s.deck = buildDeck(s.settings.count, games, this.o.bank, played,
-      { excluded: excluded, freq: s.settings.freq, mode: s.settings.mode, diff: s.settings.diff });
+    var bank = this.o.bank, prefer = {};
+    if (s.pack) {
+      bank = {};
+      Object.keys(this.o.bank).forEach(function (g) { bank[g] = this.o.bank[g]; }, this);
+      Object.keys(s.pack).forEach(function (g) {
+        s.pack[g].forEach(function (q) { prefer[q.id] = true; });
+        bank[g] = s.pack[g].concat(bank[g] || []);
+      });
+    }
+    s.deck = buildDeck(s.settings.count, games, bank, played,
+      { excluded: excluded, freq: s.settings.freq, mode: s.settings.mode, diff: s.settings.diff, prefer: prefer });
+    // on ne garde que les questions en ligne réellement tirées (l'état du salon reste léger)
+    if (s.pack) {
+      var kept = {};
+      s.deck.forEach(function (d) { kept[d.id] = true; });
+      Object.keys(s.pack).forEach(function (g) { s.pack[g] = s.pack[g].filter(function (q) { return kept[q.id]; }); });
+    }
     if (s.settings.finale) fixFinale(s.deck);
     s.round = 0;
     s.result = null;
@@ -754,12 +839,14 @@
     var item = s.deck[s.round - 1];
     if (!GAMES[item.g]) return this.nextRound();
     if (!GAMES[item.g] || (GAMES[item.g].min && s.players.length < GAMES[item.g].min)) return this.nextRound();
-    var q = findQuestion(this.o.bank, item.g, item.id);
+    var q = findQuestion(this.o.bank, item.g, item.id, s.pack);
     var now = this.now();
     var time = this.dur(item.g);
     s.cur = { g: item.g, id: item.id, q: q.q, a: q.a, startedAt: now, deadline: now + time, time: time };
     if (item.g === 'culture') s.cur.c = q.c;
     if (item.g === 'estimation') s.cur.u = q.u || '';
+    if (q.info) s.cur.info = q.info;
+    if (q.src) s.cur.src = q.src;
     if (item.g === 'bluff') s.cur.alt = q.alt || [];
     if (item.g === 'ordre') {
       // affichage mélangé ; l'ordre juste reste secret jusqu'à la révélation
@@ -844,7 +931,7 @@
     s.options = null;
     s.votes = {};
     s.phase = 'question';
-    if (this.o.markPlayed) this.o.markPlayed(item.id);
+    if (this.o.markPlayed) this.o.markPlayed(item.id, s.players.map(function (p) { return p.name; }));
     this.schedule(time, this.onDeadline);
     this.publish();
   };
@@ -1212,7 +1299,7 @@
     this.finish(res);
   };
 
-  var api = { sanitizeSettings: sanitizeSettings, computeTitles: computeTitles, countsFor: countsFor, nearMiss: nearMiss, Engine: Engine, GAMES: GAMES, newState: newState, publicView: publicView, buildDeck: buildDeck, buildOrder: buildOrder, teamsFor: teamsFor, fixFinale: fixFinale, geoDistance: geoDistance, firstLetter: firstLetter, similar: similar, matchGuess: matchGuess, knownWords: knownWords, normText: normText, containsTruth: containsTruth };
+  var api = { sanitizeSettings: sanitizeSettings, computeTitles: computeTitles, countsFor: countsFor, nearMiss: nearMiss, Engine: Engine, GAMES: GAMES, newState: newState, publicView: publicView, buildDeck: buildDeck, buildOrder: buildOrder, teamsFor: teamsFor, fixFinale: fixFinale, geoDistance: geoDistance, firstLetter: firstLetter, similar: similar, matchGuess: matchGuess, knownWords: knownWords, normText: normText, containsTruth: containsTruth, cleanPack: cleanPack };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.SCEngine = api;
 })(this);
