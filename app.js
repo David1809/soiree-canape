@@ -639,8 +639,9 @@
   // Pyramide et Croquis se jouent à 2 minimum : on prévient au lieu de lancer autre chose.
   function startBlock(S) {
     var n = S.players.length, st = S.settings;
-    var ok = st.games.filter(function (g) { return !GAMES[g].min || n >= GAMES[g].min; });
-    var ko = st.games.filter(function (g) { return GAMES[g].min && n < GAMES[g].min; });
+    var known = st.games.filter(function (g) { return !!GAMES[g]; });
+    var ok = known.filter(function (g) { return !GAMES[g].min || n >= GAMES[g].min; });
+    var ko = known.filter(function (g) { return GAMES[g].min && n < GAMES[g].min; });
     var note = '';
     if (ko.length) {
       note = '<div class="note warn">' + ko.map(function (g) { return esc(GAMES[g].name); }).join(' et ') +

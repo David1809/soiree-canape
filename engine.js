@@ -311,6 +311,8 @@
     //        markPlayed(id), getPlayed() -> {id:true}, now(), setTimeout, clearTimeout
     this.o = opts;
     this.s = opts.state || newState(opts.code, opts.hasTv);
+    // partie sauvegardée avec un jeu qui n'existe plus (ex. Punchline) : on nettoie les réglages
+    this.s.settings = sanitizeSettings(this.s.settings || {}, {});
     // partie enregistrée avec une ancienne version (jeu supprimé depuis, par ex. Punchline)
     this.s.settings = sanitizeSettings(this.s.settings || {}, {});
     this.timer = null;
@@ -751,7 +753,7 @@
     var s = this.s;
     var item = s.deck[s.round - 1];
     if (!GAMES[item.g]) return this.nextRound();
-    if (GAMES[item.g].min && s.players.length < GAMES[item.g].min) return this.nextRound();
+    if (!GAMES[item.g] || (GAMES[item.g].min && s.players.length < GAMES[item.g].min)) return this.nextRound();
     var q = findQuestion(this.o.bank, item.g, item.id);
     var now = this.now();
     var time = this.dur(item.g);
