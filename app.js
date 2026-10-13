@@ -19,6 +19,22 @@
   // ---------- utilitaires ----------
   function lsGet(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } }
   function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+  // Groupe (famille) : sépare l'historique, les signalements et le classement des autres familles
+  var LEGACY_FAM = 'moreau';
+  function famKey(s) {
+    s = String(s || '').toLowerCase();
+    try { s = s.normalize('NFD').replace(/[\u0300-\u036f]/g, ''); } catch (e) {}
+    return s.replace(/[^a-z0-9]+/g, '').slice(0, 20);
+  }
+  function famStored() { var f = lsGet('sc_fam'); return f && f.k ? f : null; }
+  function curFam() { return (typeof C !== 'undefined' && C.fam) || (famStored() || {}).k || ''; }
+  function randIndex(n) {
+    try {
+      var a = new Uint32Array(1), lim = Math.floor(4294967296 / n) * n;
+      do { (window.crypto || window.msCrypto).getRandomValues(a); } while (a[0] >= lim);
+      return a[0] % n;
+    } catch (e) { return Math.floor(Math.random() * n); }
+  }
   function lsDel(k) { try { localStorage.removeItem(k); } catch (e) {} }
   function uid() { return Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4); }
   function esc(s) {
@@ -124,21 +140,24 @@
   function openJoin(code) {
     boot('Recherche de la partie…');
     fetchRoom(code).then(function (r) {
-      if (r.error || !r.data) return showError('Partie « ' + code + ' » introuvable. Vérifie le code.');
+      if (r.error || !r.data || Date.now() - Date.parse(r.data.updated_at) > STALE_MS) return showError('Partie « ' + code + ' » introuvable. Vérifie le code.');
       start({ code: code, tv: false, engine: false }, r.data.state);
     });
   }
 
   function createRoom(asTv) {
+    var fam = (famStored() || {}).k;
+    if (!fam) return askFam(function () { createRoom(asTv); });
     boot('Création de la partie…');
     var tries = 0;
     (function attempt() {
       var code = '';
-      for (var i = 0; i < 4; i++) code += CODE_CHARS.charAt(Math.floor(Math.random() * CODE_CHARS.length));
+      for (var i = 0; i < 4; i++) code += CODE_CHARS.charAt(randIndex(CODE_CHARS.length));
       var st = SCEngine.newState(code, asTv);
+      st.fam = fam;
       sb.from('rooms').insert({ code: code, state: st }).then(function (r) {
         if (r.error) {
-          if (++tries < 5) return attempt();
+          if (++tries < 12) return attempt();
           return showError('Impossible de créer la partie (' + r.error.message + ').');
         }
         var sess = { code: code, tv: asTv, engine: true };
@@ -150,6 +169,7 @@
 
   function start(sess, state) {
     C.code = sess.code;
+    C.fam = (state && state.fam) || LEGACY_FAM;
     C.tv = !!sess.tv;
     document.body.className = C.tv ? 'tv' : 'phone';
     if (C.tv) { sizeTv(); window.addEventListener('resize', sizeTv); }
@@ -175,7 +195,7 @@
   var MONTHS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
 
   function loadPlayed(cb) {
-    sb.from('played').select('qid').then(function (r) {
+    sb.from('played').select('qid').eq('fam', curFam()).then(function (r) {
       var o = {};
       (r.data || []).forEach(function (x) { o[x.qid] = true; });
       DATA.played = o;
@@ -183,7 +203,7 @@
     });
   }
   function loadReports(cb) {
-    sb.from('reports').select('qid').then(function (r) {
+    sb.from('reports').select('qid').eq('fam', curFam()).then(function (r) {
       var o = {};
       (r.data || []).forEach(function (x) { o[x.qid] = true; });
       DATA.reports = o;
@@ -207,9 +227,9 @@
   }
 
   function loadSeason(cb) {
-    sb.from('meta').select('value').eq('key', 'season').maybeSingle().then(function (m) {
+    sb.from('meta').select('value').eq('key', 'season:' + curFam()).maybeSingle().then(function (m) {
       var cfg = (m && m.data && m.data.value) || { dur: '1m' };
-      sb.from('games').select('finished_at, players').then(function (r) {
+      sb.from('games').select('finished_at, players').eq('fam', curFam()).then(function (r) {
         var from = seasonStart(cfg).getTime(), rows = {};
         (r.data || []).forEach(function (g) {
           if (Date.parse(g.finished_at) < from) return;
@@ -250,7 +270,7 @@
       },
       markPlayed: function (id, names) {
         DATA.played[id] = true;
-        if (id.indexOf('oq') !== 0) sb.from('played').upsert({ qid: id }, { ignoreDuplicates: true }).then(function () {});
+        if (id.indexOf('oq') !== 0) sb.from('played').upsert({ fam: curFam(), qid: id }, { onConflict: 'fam,qid', ignoreDuplicates: true }).then(function () {});
         if (names && names.length) sb.rpc('mark_seen', { p_players: names, p_qid: id }).then(function () {}, function () {});
       },
       // Lot de questions en ligne (OpenQuizzDB) tiré pour le salon : jamais vues par ses joueurs en priorité
@@ -261,7 +281,7 @@
       getPlayed: function () { return DATA.played; },
       getExcluded: function () { return DATA.reports; },
       recordGame: function (players) {
-        sb.from('games').insert({ code: code, players: players }).then(function () { loadSeason(); });
+        sb.from('games').insert({ code: code, fam: curFam(), players: players }).then(function () { loadSeason(); });
       }
     });
   }
@@ -897,7 +917,7 @@
     on('qrows', 'click', function (e) {
       var g = e.target.getAttribute && e.target.getAttribute('data-reset');
       if (!g || !window.confirm('Remettre à zéro les questions déjà jouées de « ' + GAMES[g].name + ' » ?')) return;
-      sb.from('played').delete().like('qid', PREFIX[g] + '%').then(function () {
+      sb.from('played').delete().eq('fam', curFam()).like('qid', PREFIX[g] + '%').then(function () {
         Object.keys(DATA.played).forEach(function (id) { if (id.indexOf(PREFIX[g]) === 0) delete DATA.played[id]; });
         C.view = ''; render();
       });
@@ -905,7 +925,7 @@
     on('reps', 'click', function (e) {
       var id = e.target.getAttribute && e.target.getAttribute('data-restore');
       if (!id) return;
-      sb.from('reports').delete().eq('qid', id).then(function () { delete DATA.reports[id]; C.view = ''; render(); });
+      sb.from('reports').delete().eq('fam', curFam()).eq('qid', id).then(function () { delete DATA.reports[id]; C.view = ''; render(); });
     });
     on('done', 'click', function () { C.screen = 'settings'; C.view = ''; render(); });
     on('back', 'click', function () { C.screen = 'settings'; C.view = ''; render(); });
@@ -931,7 +951,7 @@
     if (!setView('season|' + (se ? se.stamp : ''), '<div class="ph">' + screenHead(se ? se.label : 'Saison') +
       '<div class="plist">' + list + '</div><div class="grow"></div>' + ctrl + '<button class="btn" id="done">Retour au salon</button></div>')) return;
     function saveCfg(cfg) {
-      sb.from('meta').upsert({ key: 'season', value: cfg, updated_at: new Date().toISOString() }).then(function () { loadSeason(); });
+      sb.from('meta').upsert({ key: 'season:' + curFam(), value: cfg, updated_at: new Date().toISOString() }).then(function () { loadSeason(); });
     }
     on('s-dur', 'click', function (e) {
       var v = e.target.getAttribute && e.target.getAttribute('data-v');
@@ -1053,7 +1073,7 @@
   }
 
   function flagImg(code, cls) {
-    return '<img class="' + cls + '" src="flags/' + esc(code) + '.svg?v=25" alt="" draggable="false">';
+    return '<img class="' + cls + '" src="flags/' + esc(code) + '.svg?v=26" alt="" draggable="false">';
   }
 
   function ordreItems() {
@@ -1259,7 +1279,7 @@
     on('next', 'click', function () { send({ t: 'cmd', cmd: 'next' }); });
     on('report', 'click', function () {
       DATA.reports[cur.id] = true;
-      sb.from('reports').upsert({ qid: cur.id }, { ignoreDuplicates: true }).then(function () {});
+      sb.from('reports').upsert({ fam: curFam(), qid: cur.id }, { onConflict: 'fam,qid', ignoreDuplicates: true }).then(function () {});
       $('report').textContent = 'Question signalée ✓';
       $('report').disabled = true;
     });
@@ -2266,7 +2286,8 @@
       '<button class="btn" id="join">Rejoindre</button></div>' +
       '<div class="stack" style="margin-top:14px"><button class="btn ghost col" id="mk"><span>Créer une partie ici</span><span class="sub">Sans télé : ce téléphone sert de plateau</span></button>' +
       '<button class="btn ghost col" id="tvb"><span>Ouvrir l\'écran télé</span><span class="sub">À lancer depuis le navigateur de la télé</span></button>' +
-      '<button class="linkbtn" id="hseason">🏆 Classement de la saison</button></div></div>';
+      '<button class="linkbtn" id="hseason">🏆 Classement de la saison</button>' +
+      '<button class="linkbtn small" id="famb">' + (famStored() ? 'Groupe : ' + esc(famStored().n) + ' · changer' : 'Choisir le nom de votre groupe') + '</button></div></div>';
     function go() {
       var c = $('code').value.toUpperCase().replace(/[^A-Z]/g, '');
       if (c.length !== 4) { $('code').focus(); return; }
@@ -2276,7 +2297,28 @@
     on('code', 'keydown', function (e) { if (e.key === 'Enter') go(); });
     on('mk', 'click', function () { createRoom(false); });
     on('tvb', 'click', function () { location.href = location.pathname + '?tv'; });
-    on('hseason', 'click', showSeasonHome);
+    on('hseason', 'click', function () { if (!famStored()) return askFam(showSeasonHome); showSeasonHome(); });
+    on('famb', 'click', function () { askFam(showHome); });
+    fit();
+  }
+
+  // Nom du groupe (famille) : garde l'historique et le classement séparés de ceux des autres familles
+  function askFam(next) {
+    document.body.className = C.tv ? 'tv' : 'phone';
+    C.view = 'fam';
+    var cur = famStored();
+    app.innerHTML = '<div class="ph"><div style="margin-top:6vh"><h1 class="title" style="font-size:34px">Votre groupe</h1>' +
+      '<div class="muted" style="margin-top:8px">Un nom pour votre famille ou votre bande (ex. « Moreau »). L\'historique des questions, les signalements et le classement sont séparés de ceux des autres groupes. Gardez le même nom à chaque soirée.</div></div>' +
+      '<div class="grow"></div><div class="stack"><input id="famin" class="input" maxlength="20" placeholder="Nom du groupe" autocomplete="off" value="' + esc(cur ? cur.n : '') + '">' +
+      '<div class="note" id="famnote"></div><button class="btn" id="famok">Valider</button></div></div>';
+    function ok() {
+      var n = $('famin').value.replace(/^\s+|\s+$/g, '').slice(0, 20), k = famKey(n);
+      if (k.length < 2) { $('famnote').textContent = 'Au moins 2 lettres ou chiffres.'; $('famin').focus(); return; }
+      lsSet('sc_fam', { k: k, n: n });
+      next();
+    }
+    on('famok', 'click', ok);
+    on('famin', 'keydown', function (e) { if (e.key === 'Enter') ok(); });
     fit();
   }
 
