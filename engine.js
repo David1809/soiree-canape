@@ -12,7 +12,7 @@
     ordre: { name: 'Dans l\'ordre !', time: 30 },
     drapeaux: { name: 'Drapeaux', time: 40 },
     pyramide: { name: 'Pyramide', time: 30, announceTime: 12, min: 2, duo: true },
-    croquis: { name: 'Croquis', time: 60, min: 2 },
+    croquis: { name: 'Croquis', time: 60, min: 2, nofinale: true },
     imposteur: { name: 'L\'Imposteur', time: 60, voteTime: 30, min: 3 },
     rebus: { name: 'Rébus emoji', time: 45 },
     petitbac: { name: 'Petit Bac', time: 60, checkTime: 35, min: 2 },
@@ -21,7 +21,7 @@
     geo: { name: 'Géo-Devine', time: 25 },
     chrono: { name: 'Pile-poil', time: 35, fixed: true }
   };
-  // duo : seuls deux joueurs jouent (jamais en finale) ; fixed : chrono indépendant du rythme
+  // duo : seuls deux joueurs jouent ; duo et nofinale : jamais dans la finale (points doubles) ; fixed : chrono indépendant du rythme
   var BAC_POINTS = { unique: 6, shared: 3 };
   // emojis connus des vieux téléphones et des télés (Unicode 9 au plus)
   var MEMO_POOL = ['🍕', '🚀', '🐶', '🎸', '⚽', '🌵', '🍩', '🎩', '🐙', '🚲', '🍉', '📷', '🦊', '🎈', '🍔', '🐢', '🌈', '🔑', '🎁', '🐝',
@@ -237,14 +237,15 @@
     return n ? out : null;
   }
 
-  // Finale (points doubles) : jamais un jeu où seuls deux joueurs jouent.
+  // Finale (points doubles = les 3 dernières épreuves) : jamais un jeu où seuls deux joueurs jouent (Pyramide), ni Croquis.
+  function noFinale(g) { return !!(GAMES[g].duo || GAMES[g].nofinale); }
   function fixFinale(deck) {
     var n = deck.length;
     if (n < 6) return deck;
-    for (var i = n - 2; i < n; i++) {
-      if (!GAMES[deck[i].g].duo) continue;
-      for (var j = n - 3; j >= 0; j--) {
-        if (GAMES[deck[j].g].duo) continue;
+    for (var i = n - 3; i < n; i++) {
+      if (!noFinale(deck[i].g)) continue;
+      for (var j = n - 4; j >= 0; j--) {
+        if (noFinale(deck[j].g)) continue;
         var t = deck[i]; deck[i] = deck[j]; deck[j] = t;
         break;
       }
