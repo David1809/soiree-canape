@@ -184,11 +184,11 @@
   }
 
   // ---------- banque, signalements, saison ----------
-  var DATA = { played: {}, reports: {}, season: null, records: {} };
+  var DATA = { played: {}, reports: {}, season: null, records: {}, words: {}, wordsLoading: {} };
   var PREFIX = { culture: 'cg', estimation: 'es', bluff: 'bl', ordre: 'or', drapeaux: 'fl', pyramide: 'py', croquis: 'cq',
-    imposteur: 'im', rebus: 'rb', petitbac: 'pb', reflexe: 'rx', memoire: 'me', geo: 'geo', chrono: 'ch' };
+    imposteur: 'im', rebus: 'rb', petitbac: 'pb', reflexe: 'rx', memoire: 'me', geo: 'geo', chrono: 'ch', bombe: 'bo' };
   // jeux sans vraie banque de questions (générés à la volée) : pas listés dans « Banque de questions »
-  var GENERATED = { petitbac: 1, reflexe: 1, memoire: 1, chrono: 1 };
+  var GENERATED = { petitbac: 1, reflexe: 1, memoire: 1, chrono: 1, bombe: 1 };
   var MONTHS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
 
   function loadPlayed(cb) {
@@ -284,6 +284,17 @@
       },
       getPlayed: function () { return DATA.played; },
       getExcluded: function () { return DATA.reports; },
+      loadWords: function (l) {
+        if (DATA.words[l] || DATA.wordsLoading[l] || !window.fetch) return;
+        DATA.wordsLoading[l] = 1;
+        fetch('words/' + l + '.txt?v=' + APP_VERSION.slice(1)).then(function (r) { return r.text(); }).then(function (t) {
+          var set = Object.create(null);
+          t.split('\n').forEach(function (w) { if (w) set[w] = 1; });
+          DATA.words[l] = set;
+        }).catch(function () { delete DATA.wordsLoading[l]; });
+      },
+      // true / false une fois le dictionnaire de la lettre chargé ; null avant (on accepte alors le mot)
+      checkWord: function (l, w) { var set = DATA.words[l]; return set ? set[w] === 1 : null; },
       getRecord: function (g) { return DATA.records[g] || null; },
       setRecord: function (g, rec) {
         DATA.records[g] = rec;
@@ -448,6 +459,8 @@
     // révélation : roulement puis accord
     reveal: function () { hiss(0, 0.55, 0.1, 400, 2400); [523, 659, 784].forEach(function (f) { tone(f, 0.55, 0.45, { type: 'triangle', vol: 0.09 }); }); },
     go: function () { tone(1000, 0, 0.22, { type: 'square', vol: 0.1 }); },
+    // la bombe explose
+    boom: function () { hiss(0, 0.7, 0.22, 60, 1400); tone(120, 0, 0.6, { type: 'sawtooth', vol: 0.12, to: 35 }); },
     // classement final : fanfare
     final: function () {
       [[523, 0, 0.12], [523, 0.14, 0.12], [523, 0.28, 0.12], [698, 0.42, 0.5], [880, 0.95, 0.18], [784, 1.15, 0.18], [1047, 1.35, 0.8]].forEach(function (n) {
@@ -456,6 +469,13 @@
       hiss(1.35, 0.9, 0.06, 3000, 6000);
     }
   };
+  // La bombe arrive sur mon téléphone : petit signal sonore et vibration
+  function bombAlert(S, prev) {
+    if (C.tv || !S.cur || S.cur.g !== 'bombe' || S.cur.holder !== me.pid) return;
+    if (prev && prev.cur && prev.cur.holder === me.pid) return;
+    sfx('start');
+    try { if (navigator.vibrate) navigator.vibrate([120, 60, 120]); } catch (e) {}
+  }
   function sfx(name) {
     if (C.S && C.S.settings && C.S.settings.sound === false) return;
     if (window.__sfxLog) window.__sfxLog.push(name); // pour les tests
@@ -468,9 +488,9 @@
     var board = C.tv || (!S.hasTv && !!C.engine);
     if (S.phase !== prev.phase || S.round !== prev.round) {
       if (S.phase === 'draw') { if (board) sfx('draw'); }
-      else if (S.phase === 'question' || S.phase === 'vote') { if (board) sfx('start'); }
+      else if (S.phase === 'question' || S.phase === 'vote') { if (board) sfx('start'); bombAlert(S, null); }
       else if (S.phase === 'reveal') {
-        if (C.tv) sfx('reveal');
+        if (C.tv) sfx(S.cur && S.cur.g === 'bombe' ? 'boom' : 'reveal');
         else { var r = (S.result || {})[me.pid]; if (r) sfx(r.pts > 0 ? 'good' : 'bad'); }
       } else if (S.phase === 'final') {
         if (board) sfx('final');
@@ -479,6 +499,10 @@
       return;
     }
     if (S.phase !== 'question' && S.phase !== 'vote') return;
+    if (S.cur && S.cur.g === 'bombe' && prev.cur) {
+      if (S.cur.holder !== prev.cur.holder) { if (C.tv) sfx('blip'); bombAlert(S, prev); }
+      return;
+    }
     if (S.cur && prev.cur && S.cur.step !== prev.cur.step) { if (board) sfx('start'); return; }
     if (C.tv) {
       var f1 = prev.cur && prev.cur.found ? prev.cur.found.length : 0, f2 = S.cur && S.cur.found ? S.cur.found.length : 0;
@@ -1001,6 +1025,7 @@
     if (G === 'memoire') return phoneMemo();
     if (G === 'geo') return phoneGeo();
     if (G === 'chrono') return phoneChrono();
+    if (G === 'bombe') return phoneBombe();
     var S = C.S, cur = S.cur, ans = answeredSet();
     var rej = (S.reject || {})[me.pid];
     var writes = cur.g === 'bluff';
@@ -1082,7 +1107,7 @@
   }
 
   function flagImg(code, cls) {
-    return '<img class="' + cls + '" src="flags/' + esc(code) + '.svg?v=29" alt="" draggable="false">';
+    return '<img class="' + cls + '" src="flags/' + esc(code) + '.svg?v=30" alt="" draggable="false">';
   }
 
   function ordreItems() {
@@ -1448,6 +1473,11 @@
       return ['<div class="verdict ' + (r.pts ? 'ok' : 'ko') + '"><span class="big" style="font-size:26px">Lettre ' + esc(cur.l) + '</span>' + (r.pts ? plus(r.pts) : '<span>Aucun point</span>') + '</div>',
         '<div class="stack" style="gap:6px">' + rows + '</div>'];
     }
+    if (cur.g === 'bombe') {
+      var bp = findP(cur.boom), nw = r.n || 0;
+      return ['<div class="verdict ' + (r.boom ? 'ko' : 'ok') + '"><span class="big" style="font-size:26px">' + (r.boom ? 'BOOM ! Elle t\'a explosé dessus' : 'Elle a explosé chez ' + esc(bp ? bp.name : '?')) + '</span>' +
+        '<span>' + nw + ' mot' + (nw > 1 ? 's' : '') + ' trouvé' + (nw > 1 ? 's' : '') + '</span>' + (r.boom ? '<span>0 point pour cette manche</span>' : plus(r.pts)) + '</div>'];
+    }
     if (cur.g === 'reflexe') {
       return ['<div class="verdict ' + (r.pts ? 'ok' : 'ko') + '"><span class="big">' + (r.v == null ? 'Pas tapé' : r.early ? 'Faux départ' : r.v + ' ms') + '</span>' +
         (r.rank >= 0 && r.v != null && !r.early ? '<span>' + ord(r.rank + 1) + ' plus rapide</span>' : '') + plus(r.pts) + '</div>'];
@@ -1725,6 +1755,45 @@
     on('gok', 'click', function () { if (!g.pin) return; g.sent = true; send({ t: 'answer', round: S.round, val: g.pin }); render(); });
   }
 
+  // ---------- La Bombe ----------
+  var BOMB_SVG = '<svg class="bombsvg" viewBox="0 0 100 100"><circle cx="46" cy="60" r="30" fill="#14121F"/>' +
+    '<path d="M64 36c6-8 12-10 18-8" stroke="#14121F" stroke-width="6" fill="none" stroke-linecap="round"/>' +
+    '<g class="spark"><circle cx="85" cy="25" r="6" fill="#F5C518"/><path d="M85 12v8M85 30v8M72 25h8M90 25h8" stroke="#E5484D" stroke-width="3" stroke-linecap="round"/></g>' +
+    '<circle cx="36" cy="48" r="7" fill="#fff" opacity=".35"/></svg>';
+  function phoneBombe() {
+    var S = C.S, cur = S.cur, mine = cur.holder === me.pid, rej = (S.reject || {})[me.pid];
+    var key = 'bo|' + S.round + '|' + (mine ? 1 : 0) + '|' + (mine && rej ? rej.n : 0);
+    var body = mine
+      ? '<div class="bomb hot">' + BOMB_SVG + '</div><div class="stack"><input id="bw" class="input big" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="' + esc(cur.letter) + '…">' +
+        '<div class="note bombrej">' + (rej ? 'Refusé' : '&nbsp;') + '</div><button class="btn" id="bsend">Valider</button></div>'
+      : '<div class="bomb">' + BOMB_SVG + '</div><div class="note" style="text-align:center">La bombe circule… ne la garde pas !</div>';
+    var fresh = setView(key, '<div class="ph">' + topbar() + '<div class="bombhead"><span>Un mot qui commence par</span><b>' + esc(cur.letter) + '</b></div>' + body + '<div class="grow"></div></div>');
+    fit();
+    if (!fresh || !mine) return;
+    function go() {
+      var v = $('bw').value.replace(/^\s+|\s+$/g, '');
+      if (!v) { $('bw').focus(); return; }
+      $('bsend').disabled = true;
+      setTimeout(function () { var b = $('bsend'); if (b) b.disabled = false; }, 2500);
+      send({ t: 'answer', round: S.round, val: v });
+    }
+    on('bsend', 'click', go);
+    on('bw', 'keydown', function (e) { if (e.key === 'Enter') go(); });
+    setTimeout(function () { var i = $('bw'); if (i) i.focus(); }, 60);
+  }
+  function tvBombe() {
+    var S = C.S, cur = S.cur;
+    var fresh = setView('tbo|' + S.round, '<div class="tvw">' + tvBar(false) + '<div class="bombtv"><span>Un mot qui commence par</span><b>' + esc(cur.letter) + '</b>' +
+      '<div class="bomb hot">' + BOMB_SVG + '</div></div><div class="foot muted">La bombe passe de téléphone en téléphone…</div></div>');
+    if (fresh) {
+      clearInterval(C.bombT);
+      C.bombT = setInterval(function () {
+        if (!C.S || C.S.phase !== 'question' || !C.S.cur || C.S.cur.g !== 'bombe') { clearInterval(C.bombT); return; }
+        sfx('tick');
+      }, 800);
+    }
+  }
+
   // ---------- Pile-poil ----------
   function phoneChrono() {
     var S = C.S, cur = S.cur, ans = answeredSet();
@@ -1949,6 +2018,7 @@
     if (G === 'memoire') return tvMemo();
     if (G === 'geo') return tvGeo();
     if (G === 'chrono') return tvChrono();
+    if (G === 'bombe') return tvBombe();
     var S = C.S, cur = S.cur, body = '';
     if (cur.g === 'culture') {
       body = '<div class="grid2">' + cur.c.map(function (t, i) {
@@ -2140,6 +2210,11 @@
       var finders = (cur.found || []).map(function (f) { var p = findP(f.pid); return p ? '<div class="srow">' + avR(p, 2.4) + '<span class="n">' + esc(p.name) + '</span><span class="g">+' + ((res[f.pid] || {}).pts || 0) + '</span></div>' : ''; }).join('');
       return '<div class="rebus tv sm"><span class="emo">' + esc(cur.e || '') + '</span></div><div class="truth">' + esc(cur.a) + '</div>' +
         (finders || '<div class="muted" style="font-size:1.4rem">Personne n\'a trouvé</div>');
+    }
+    if (cur.g === 'bombe') {
+      var bq = findP(cur.boom);
+      return '<div class="bigres">' + (bq ? avR(bq, 3) + ' ' : '') + 'BOOM ! ' + esc(bq ? bq.name : '?') + ' fait exploser la bombe' + '</div>' +
+        rows(S.players, function (r) { var n = r.n || 0; return '<span class="v">' + (r.boom ? '0 pt (boum)' : n + ' mot' + (n > 1 ? 's' : '')) + '</span>'; });
     }
     if (cur.g === 'petitbac') return bacTable(cur, { res: res });
     if (cur.g === 'reflexe') {
