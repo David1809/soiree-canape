@@ -179,11 +179,28 @@
       };
       return pick(good).concat(pick(rest));
     }
+    // Même énoncé (ex. « Montagnes de la plus haute à la moins haute ») : une seule fois par partie, et de préférence jamais déjà joué
+    var usedQ = {};
+    function qkey(g, q) { return g === 'ordre' && typeof q.q === 'string' ? q.q.toLowerCase().replace(/[^a-z0-9àâäçéèêëîïôöùûüÿœ]+/g, ' ').trim() : null; }
+    var playedQ = {};
+    (bank.ordre || []).forEach(function (q) { if (played[q.id]) playedQ[qkey('ordre', q)] = true; });
     return order.map(function (g) {
       if (!pools[g] || !pools[g].length) pools[g] = refill(g).filter(function (q) { return !used[q.id]; });
       if (!pools[g].length) pools[g] = refill(g);
-      var q = pools[g].shift();
+      var at = 0;
+      if (g === 'ordre') {
+        var i, k, best = -1;
+        for (i = 0; i < pools[g].length; i++) {
+          k = qkey(g, pools[g][i]);
+          if (usedQ[k]) continue;
+          if (!played[pools[g][i].id] && !playedQ[k]) { best = i; break; }   // inédit : énoncé et question jamais joués
+          if (best < 0) best = i;
+        }
+        at = best < 0 ? 0 : best;
+      }
+      var q = pools[g].splice(at, 1)[0];
       used[q.id] = true;
+      if (g === 'ordre') usedQ[qkey(g, q)] = true;
       return { g: g, id: q.id };
     });
   }
