@@ -42,6 +42,14 @@
   var me = lsGet('sc_me');
   if (!me || !me.pid) { me = { pid: uid(), name: '', color: null }; lsSet('sc_me', me); }
 
+  // Version réellement chargée sur cet appareil (celle de app.js?v=NN) : permet de vérifier que tout le monde a la même
+  var APP_VERSION = (function () {
+    try {
+      var sc = document.getElementsByTagName('script');
+      for (var i = 0; i < sc.length; i++) { var m = /app\.js\?v=(\d+)/.exec(sc[i].getAttribute('src') || ''); if (m) return 'v' + m[1]; }
+    } catch (e) {}
+    return 'v?';
+  })();
   var C = {
     code: null, tv: false, engine: null, ch: null, ready: false, queue: [],
     S: null, endAt: 0, view: '', myRound: -1, myAns: null, gotFresh: false,
@@ -160,6 +168,7 @@
     C.code = sess.code;
     C.tv = !!sess.tv;
     document.body.className = C.tv ? 'tv' : 'phone';
+    var verEl = document.getElementById('ver'); if (verEl) verEl.textContent = C.tv ? APP_VERSION : '';
     if (C.tv) { sizeTv(); window.addEventListener('resize', sizeTv); }
     try { history.replaceState(null, '', C.tv ? '?tv' : '?r=' + sess.code); } catch (e) {}
     if (sess.engine) C.engine = makeEngine(sess.code, state, sess.tv);
@@ -1073,7 +1082,7 @@
   }
 
   function flagImg(code, cls) {
-    return '<img class="' + cls + '" src="flags/' + esc(code) + '.svg?v=28" alt="" draggable="false">';
+    return '<img class="' + cls + '" src="flags/' + esc(code) + '.svg?v=29" alt="" draggable="false">';
   }
 
   function ordreItems() {
@@ -2304,7 +2313,7 @@
       '<button class="btn" id="join">Rejoindre</button></div>' +
       '<div class="stack" style="margin-top:14px"><button class="btn ghost col" id="mk"><span>Créer une partie ici</span><span class="sub">Sans télé : ce téléphone sert de plateau</span></button>' +
       '<button class="btn ghost col" id="tvb"><span>Ouvrir l\'écran télé</span><span class="sub">À lancer depuis le navigateur de la télé</span></button>' +
-      '<button class="linkbtn" id="hseason">🏆 Classement de la saison</button></div></div>';
+      '<button class="linkbtn" id="hseason">🏆 Classement de la saison</button></div><div class="ver home">' + APP_VERSION + '</div></div>';
     function go() {
       var c = $('code').value.toUpperCase().replace(/[^A-Z]/g, '');
       if (c.length !== 4) { $('code').focus(); return; }
