@@ -19,6 +19,14 @@
   // ---------- utilitaires ----------
   function lsGet(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } }
   function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+  // Tirage aléatoire sûr (codes de salon imprévisibles, pas de collision entre familles)
+  function randIndex(n) {
+    try {
+      var a = new Uint32Array(1), lim = Math.floor(4294967296 / n) * n;
+      do { (window.crypto || window.msCrypto).getRandomValues(a); } while (a[0] >= lim);
+      return a[0] % n;
+    } catch (e) { return Math.floor(Math.random() * n); }
+  }
   function lsDel(k) { try { localStorage.removeItem(k); } catch (e) {} }
   function uid() { return Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4); }
   function esc(s) {
@@ -124,7 +132,7 @@
   function openJoin(code) {
     boot('Recherche de la partie…');
     fetchRoom(code).then(function (r) {
-      if (r.error || !r.data) return showError('Partie « ' + code + ' » introuvable. Vérifie le code.');
+      if (r.error || !r.data || Date.now() - Date.parse(r.data.updated_at) > STALE_MS) return showError('Partie « ' + code + ' » introuvable. Vérifie le code.');
       start({ code: code, tv: false, engine: false }, r.data.state);
     });
   }
@@ -134,11 +142,11 @@
     var tries = 0;
     (function attempt() {
       var code = '';
-      for (var i = 0; i < 4; i++) code += CODE_CHARS.charAt(Math.floor(Math.random() * CODE_CHARS.length));
+      for (var i = 0; i < 4; i++) code += CODE_CHARS.charAt(randIndex(CODE_CHARS.length));
       var st = SCEngine.newState(code, asTv);
       sb.from('rooms').insert({ code: code, state: st }).then(function (r) {
         if (r.error) {
-          if (++tries < 5) return attempt();
+          if (++tries < 12) return attempt();
           return showError('Impossible de créer la partie (' + r.error.message + ').');
         }
         var sess = { code: code, tv: asTv, engine: true };
@@ -1053,7 +1061,7 @@
   }
 
   function flagImg(code, cls) {
-    return '<img class="' + cls + '" src="flags/' + esc(code) + '.svg?v=25" alt="" draggable="false">';
+    return '<img class="' + cls + '" src="flags/' + esc(code) + '.svg?v=26" alt="" draggable="false">';
   }
 
   function ordreItems() {
