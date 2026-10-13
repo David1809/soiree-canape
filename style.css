@@ -487,3 +487,18 @@ body.tv { overflow: hidden; background-size: 2rem 2rem; }
 .anec.tv { font-size: 1.25rem; padding: .9rem 1.1rem; border-radius: 1rem; margin-top: auto; }
 .anec.tv p { -webkit-line-clamp: 6; margin-bottom: .5rem; }
 .anec.tv .credit { font-size: 1rem; }
+
+/* Drapeaux */
+.fnames { display: flex; flex-wrap: wrap; gap: 8px; }
+.fname { display: flex; align-items: center; gap: 8px; flex: 1 1 45%; min-width: 0; padding: 4px 10px 4px 4px; border-radius: 12px; background: var(--paper); border: 3px solid var(--ink); font-family: var(--display); font-size: 16px; font-weight: 600; }
+.fname .letter { width: 26px; height: 26px; border-radius: 8px; font-size: 14px; background: var(--accent); flex: none; }
+.olist.flags { gap: 8px; }
+.olist.flags .oitem { min-height: 0; padding: 5px 12px; }
+.flag { display: block; width: 76px; height: 57px; object-fit: contain; border: 2px solid var(--ink); border-radius: 6px; background: #fff; flex: 1 0 auto; margin: 0 auto; max-width: 76px; }
+.flag.sm { width: 40px; height: 30px; flex: none; margin: 0; }
+.tvw .grid4.fn .ocard { min-height: 0; padding: 0.8rem 1rem; flex-direction: row; align-items: center; gap: 0.8rem; }
+.tvw .grid4.fl .ocard { align-items: center; justify-content: center; padding: 0.7rem; min-height: 0; }
+.tvw .grid4.fl .flag { width: 5.6rem; max-width: 100%; height: 4.2rem; margin: 0; }
+.tvw .grid4.fl .ocard.good .t { font-size: 1.4rem; margin-top: 0.4rem; }
+.tvw .grid4.fn .ocard .t { font-size: 1.3rem; line-height: 1.15; }
+.tvw .grid4.fn { margin-bottom: 0.2rem; }

@@ -10,6 +10,7 @@
     estimation: { name: 'Estimation', time: 30 },
     bluff: { name: 'Le Bluff', time: 60, voteTime: 30 },
     ordre: { name: 'Dans l\'ordre !', time: 30 },
+    drapeaux: { name: 'Drapeaux', time: 40 },
     pyramide: { name: 'Pyramide', time: 30, announceTime: 12, min: 2, duo: true },
     croquis: { name: 'Croquis', time: 60, min: 2 },
     imposteur: { name: 'L\'Imposteur', time: 60, voteTime: 30, min: 3 },
@@ -75,6 +76,8 @@
   }
 
   function similar(a, b) {
+    // deux réponses qui ne diffèrent que par un nombre (« 36 heures » / « 48 heures ») ne sont pas les mêmes
+    if (String(a).replace(/\D+/g, ' ').trim() !== String(b).replace(/\D+/g, ' ').trim()) return false;
     var x = phon(normText(a)), y = phon(normText(b));
     if (!x || !y) return false;
     if (x === y) return true;
@@ -269,7 +272,8 @@
     rings.forEach(function (r) { r.forEach(function (pt) { var d = kmBetween(p, toLonLat(geo, pt[0], pt[1])); if (d < best) best = d; }); });
     return Math.round(best);
   }
-  function geoPoints(km) { return km === 0 ? 30 : km <= 500 ? 20 : km <= 1500 ? 12 : km <= 3000 ? 6 : 0; }
+  // Dans le pays : 30. Sinon les points baissent régulièrement avec la distance (24 à 250 km, 18 à 1 240 km, 7 à 3 000 km, 0 à 4 000 km).
+  function geoPoints(km) { return km === 0 ? 30 : Math.max(0, Math.min(29, Math.round(26 * (1 - km / 4000)))); }
 
   // Petit Bac : première lettre réelle d'un mot (sans accent ni article).
   function firstLetter(w) {
@@ -277,6 +281,12 @@
     if (t.normalize) t = t.normalize('NFD').replace(/[̀-ͯ]/g, '');
     t = t.replace(/œ/g, 'oe').replace(/æ/g, 'ae').replace(/^[^a-z0-9]+/, '');
     return t.charAt(0);
+  }
+
+  // Drapeaux qu'on prend facilement l'un pour l'autre : jamais dans la même série
+  var FLAG_TWINS = [['id', 'mc', 'pl'], ['ro', 'td', 'ad', 'md'], ['ie', 'ci', 'it'], ['nl', 'lu'], ['au', 'nz'], ['sk', 'si', 'ru'], ['no', 'is']];
+  function confusable(a, b) {
+    return FLAG_TWINS.some(function (g) { return g.indexOf(a) >= 0 && g.indexOf(b) >= 0; });
   }
 
   function findQuestion(bank, g, id, pack) {
@@ -626,7 +636,7 @@
       if (typeof v !== 'number' || v !== Math.floor(v) || v < 0 || v > 3) return;
     } else if (s.cur.g === 'estimation') {
       if (typeof v !== 'number' || !isFinite(v)) return;
-    } else if (s.cur.g === 'ordre') {
+    } else if (s.cur.g === 'ordre' || s.cur.g === 'drapeaux') {
       if (!Array.isArray(v) || v.length !== s.cur.items.length) return;
       var seen = {};
       for (var i = 0; i < v.length; i++) {
@@ -854,6 +864,23 @@
       s.cur.items = idx.map(function (i) { return { t: q.items[i].t }; });
       s.cur.vals = idx.map(function (i) { return q.items[i].v; });
       s.cur.order = q.items.map(function (_, i) { return idx.indexOf(i); });
+      delete s.cur.a;
+    }
+    if (item.g === 'drapeaux') {
+      // 4 pays (jamais deux drapeaux qu'on confond) : la liste des pays reste dans l'ordre, les drapeaux sont mélangés
+      var pool = shuffle((this.o.bank.drapeaux || []).filter(function (x) { return x.id !== q.id; }));
+      var four = [q], groups = [q.f];
+      for (var fi = 0; fi < pool.length && four.length < 4; fi++) {
+        var c = pool[fi];
+        if (four.some(function (o) { return confusable(o.f, c.f); })) continue;
+        four.push(c);
+      }
+      four = shuffle(four);
+      var fidx = shuffle(four.map(function (_, i) { return i; }));
+      s.cur.q = 'Remets les drapeaux dans l\'ordre des pays';
+      s.cur.names = four.map(function (x) { return x.a; });
+      s.cur.items = fidx.map(function (i) { return { f: four[i].f }; });
+      s.cur.order = four.map(function (_, i) { return fidx.indexOf(i); });
       delete s.cur.a;
     }
     s.roles = s.roles || {};
@@ -1090,7 +1117,7 @@
         if (res[f.pid]) res[f.pid] = { found: true, rank: i, pts: ([30, 20, 10][i] || 10) * mult };
       });
       if (res[cur.drawer]) res[cur.drawer] = { role: 'drawer', pts: cur.found.length * 10 * mult, finders: cur.found.length };
-    } else if (cur.g === 'ordre') {
+    } else if (cur.g === 'ordre' || cur.g === 'drapeaux') {
       Object.keys(answers).forEach(function (pid) {
         if (!res[pid]) return;
         var v = answers[pid].v, good = 0;

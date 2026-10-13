@@ -168,7 +168,7 @@
 
   // ---------- banque, signalements, saison ----------
   var DATA = { played: {}, reports: {}, season: null };
-  var PREFIX = { culture: 'cg', estimation: 'es', bluff: 'bl', ordre: 'or', pyramide: 'py', croquis: 'cq',
+  var PREFIX = { culture: 'cg', estimation: 'es', bluff: 'bl', ordre: 'or', drapeaux: 'fl', pyramide: 'py', croquis: 'cq',
     imposteur: 'im', rebus: 'rb', petitbac: 'pb', reflexe: 'rx', memoire: 'me', geo: 'geo', chrono: 'ch' };
   // jeux sans vraie banque de questions (générés à la volée) : pas listés dans « Banque de questions »
   var GENERATED = { petitbac: 1, reflexe: 1, memoire: 1, chrono: 1 };
@@ -1003,15 +1003,18 @@
       } else {
         body = '<div class="card" style="text-align:center"><div class="label">Ton mensonge</div><div style="font-size:22px;font-weight:700;margin-top:6px">' + esc(C.myAns || 'envoyé') + '</div></div>';
       }
-    } else if (cur.g === 'ordre') {
+    } else if (cur.g === 'ordre' || cur.g === 'drapeaux') {
       if (!C.ordre) C.ordre = cur.items.map(function (_, i) { return i; });
-      body = '<div class="olist' + (done ? ' done' : '') + '" id="olist">' + ordreItems() + '</div>' +
+      if (cur.g === 'drapeaux') body = '<div class="fnames">' + cur.names.map(function (n, i) {
+        return '<div class="fname"><span class="letter">' + (i + 1) + '</span><span>' + esc(n) + '</span></div>';
+      }).join('') + '</div>';
+      body += '<div class="olist' + (done ? ' done' : '') + (cur.g === 'drapeaux' ? ' flags' : '') + '" id="olist">' + ordreItems() + '</div>' +
         (done ? '' : '<button class="btn" id="sendordre">Valider mon ordre</button>');
     }
     var fresh = setView(key, '<div class="ph">' + phoneHead() + body + '<div class="grow"></div><div class="note" id="stat"></div></div>');
     var n = (S.answered || []).length;
     $('stat').textContent = done ? 'Réponse envoyée · ' + n + '/' + S.players.length + ' ont répondu' :
-      (cur.g === 'ordre' ? 'Fais glisser les cartes, ou touche deux cartes pour les échanger' : 'Réponds avant la fin du chrono');
+      ((cur.g === 'ordre' || cur.g === 'drapeaux') ? 'Fais glisser les ' + (cur.g === 'ordre' ? 'cartes' : 'drapeaux') + ', ou touche-en deux pour les échanger' : 'Réponds avant la fin du chrono');
     fit();
     if (!fresh) return;
     on('opts', 'click', function (e) {
@@ -1046,12 +1049,18 @@
       send({ t: 'answer', round: S.round, val: C.myAns });
       render();
     });
-    if (cur.g === 'ordre' && !done) bindDrag($('olist'));
+    if ((cur.g === 'ordre' || cur.g === 'drapeaux') && !done) bindDrag($('olist'));
+  }
+
+  function flagImg(code, cls) {
+    return '<img class="' + cls + '" src="flags/' + esc(code) + '.svg?v=23" alt="" draggable="false">';
   }
 
   function ordreItems() {
-    var items = C.S.cur.items;
+    var items = C.S.cur.items, fl = C.S.cur.g === 'drapeaux';
     return C.ordre.map(function (k, pos) {
+      if (fl) return '<div class="oitem' + (C.pick === pos ? ' picked' : '') + '" data-pos="' + pos + '"><span class="letter">' + (pos + 1) + '</span>' + flagImg(items[k].f, 'flag') +
+        '<svg class="grip" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01"/></svg></div>';
       return '<div class="oitem' + (C.pick === pos ? ' picked' : '') + '" data-pos="' + pos + '"><span class="letter">' + (pos + 1) + '</span><span class="t">' + esc(items[k].t) + '</span>' +
         '<svg class="grip" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01"/></svg></div>';
     }).join('');
@@ -1227,6 +1236,16 @@
           (r.pts ? '<span style="font-weight:800;font-size:22px">+' + r.pts + '</span>' : '') +
           '<span' + (r.found ? '' : ' class="muted"') + '>Le dessin de ' + esc(drawer ? drawer.name : '?') + ' : <b>' + esc(w) + '</b></span></div>';
       }
+    }
+    if (cur.g === 'drapeaux') {
+      var nf = cur.order.length;
+      verdict = '<div class="verdict ' + (r.pts ? 'ok' : 'ko') + '"><span class="big">' + (r.v == null ? 'Pas de réponse' : (r.good || 0) + ' / ' + nf + ' bien placés') + '</span>' +
+        (r.pts ? '<span>+' + r.pts + (r.good === nf ? ' · sans faute !' : '') + '</span>' : '') + '</div>';
+      extra = '<div class="stack" style="gap:6px">' + cur.order.map(function (k, pos) {
+        var ok = r.v && r.v[pos] === k;
+        return '<div class="prow">' + flagImg(cur.items[k].f, 'flag sm') + '<span class="n">' + esc(cur.names[pos]) + '</span>' +
+          (r.v ? '<span class="' + (ok ? 'okmark' : 'komark') + '">' + (ok ? '✓' : '✗') + '</span>' : '') + '</div>';
+      }).join('') + '</div>';
     }
     var nv = newVerdict(cur, r);
     if (nv) { verdict = nv[0]; extra = nv[1] || ''; }
@@ -1910,6 +1929,12 @@
       body = '<div class="muted" style="font-size:1.8rem">Tapez un nombre sur votre téléphone' + (cur.u ? ' — réponse en ' + esc(cur.u) : '') + '</div>';
     } else if (cur.g === 'bluff') {
       body = '<div class="muted" style="font-size:1.8rem">Inventez une fausse réponse crédible sur votre téléphone</div>';
+    } else if (cur.g === 'drapeaux') {
+      body = '<div class="grid4 fn">' + cur.names.map(function (n, i) {
+        return '<div class="ocard"><span class="num">' + (i + 1) + '</span><span class="t">' + esc(n) + '</span></div>';
+      }).join('') + '</div><div class="grid4 fl">' + cur.items.map(function (it) {
+        return '<div class="ocard">' + flagImg(it.f, 'flag') + '</div>';
+      }).join('') + '</div><div class="muted" style="font-size:1.4rem">Classez les drapeaux sur votre téléphone</div>';
     } else if (cur.g === 'ordre') {
       body = '<div class="grid4">' + cur.items.map(function (it) {
         return '<div class="ocard"><span class="t">' + esc(it.t) + '</span></div>';
@@ -2150,6 +2175,16 @@
         return '<div class="opt col ' + (o.by === null ? 'good' : '') + '"><div style="display:flex;align-items:center;gap:1rem"><span class="letter">' + LETTERS2[i] + '</span><span class="t">' + esc(o.text) + '</span></div>' +
           '<div class="meta">' + tag + '<span class="who">' + voters.map(function (p) { return avR(p, 2); }).join('') + '</span></div></div>';
       }).join('') + '</div>';
+    } else if (cur.g === 'drapeaux') {
+      var frows = S.players.map(function (p) {
+        var r = res[p.pid] || {};
+        var marks = cur.order.map(function (k, pos) { return '<i class="' + (r.v && r.v[pos] === k ? 'on' : '') + '"></i>'; }).join('');
+        return '<div class="erow">' + avR(p, 2.6) + '<span class="n">' + esc(p.name) + '</span><span class="marks">' + marks + '</span>' +
+          '<span class="d">' + (r.v ? r.good + ' / ' + cur.order.length : 'pas de réponse') + '</span><span class="g">' + (r.pts ? '+' + r.pts : '') + '</span></div>';
+      }).join('');
+      body = '<div class="grid4 fl">' + cur.order.map(function (k, pos) {
+        return '<div class="ocard good">' + flagImg(cur.items[k].f, 'flag') + '<span class="t">' + esc(cur.names[pos]) + '</span></div>';
+      }).join('') + '</div><div class="erows' + (S.players.length > 3 ? ' two' : '') + '">' + frows + '</div>';
     } else if (cur.g === 'ordre') {
       var rows = S.players.map(function (p) {
         var r = res[p.pid] || {};
