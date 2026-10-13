@@ -163,6 +163,8 @@
 .fname > * + * { margin-left: 8px; }
 .olist.flags > * + * { margin-left: 8px; }
 .tvw .grid4.fn .ocard > * + * { margin-left: 0.8rem; }
+.tvw .rxrec > * + * { margin-left: 1.2rem; }
+.tvw .rxrec .t .hold > * + * { margin-left: 1rem; }
 .stack[style="gap:4px"] > * + * { margin-top: 4px; margin-left: 0; }
 .card.stack[style="gap:12px"] > * + * { margin-top: 12px; margin-left: 0; }
 .stack[style="gap:10px"] > * + * { margin-top: 10px; margin-left: 0; }

@@ -175,7 +175,7 @@
   }
 
   // ---------- banque, signalements, saison ----------
-  var DATA = { played: {}, reports: {}, season: null };
+  var DATA = { played: {}, reports: {}, season: null, records: {} };
   var PREFIX = { culture: 'cg', estimation: 'es', bluff: 'bl', ordre: 'or', drapeaux: 'fl', pyramide: 'py', croquis: 'cq',
     imposteur: 'im', rebus: 'rb', petitbac: 'pb', reflexe: 'rx', memoire: 'me', geo: 'geo', chrono: 'ch' };
   // jeux sans vraie banque de questions (générés à la volée) : pas listés dans « Banque de questions »
@@ -188,6 +188,13 @@
       (r.data || []).forEach(function (x) { o[x.qid] = true; });
       DATA.played = o;
       if (cb) cb();
+    });
+  }
+  function loadRecords() {
+    sb.from('meta').select('key, value').like('key', 'record:%').then(function (r) {
+      var o = {};
+      (r.data || []).forEach(function (x) { if (x.value && typeof x.value.ms === 'number') o[String(x.key).slice(7)] = x.value; });
+      DATA.records = o;
     });
   }
   function loadReports(cb) {
@@ -241,8 +248,8 @@
 
   function makeEngine(code, state, hasTv) {
     var persistT = null;
-    loadPlayed(); loadReports();
-    setInterval(function () { if (C.S && C.S.phase === 'lobby') { loadPlayed(); loadReports(); } }, 30000);
+    loadPlayed(); loadReports(); loadRecords();
+    setInterval(function () { if (C.S && C.S.phase === 'lobby') { loadPlayed(); loadReports(); loadRecords(); } }, 30000);
     return new SCEngine.Engine({
       code: code, hasTv: hasTv, state: state, bank: QUESTIONS,
       broadcast: function (view, rem) {
@@ -268,6 +275,11 @@
       },
       getPlayed: function () { return DATA.played; },
       getExcluded: function () { return DATA.reports; },
+      getRecord: function (g) { return DATA.records[g] || null; },
+      setRecord: function (g, rec) {
+        DATA.records[g] = rec;
+        sb.from('meta').upsert({ key: 'record:' + g, value: rec, updated_at: new Date().toISOString() }).then(function () {});
+      },
       recordGame: function (players) {
         sb.from('games').insert({ code: code, players: players }).then(function () { loadSeason(); });
       }
@@ -1061,7 +1073,7 @@
   }
 
   function flagImg(code, cls) {
-    return '<img class="' + cls + '" src="flags/' + esc(code) + '.svg?v=27" alt="" draggable="false">';
+    return '<img class="' + cls + '" src="flags/' + esc(code) + '.svg?v=28" alt="" draggable="false">';
   }
 
   function ordreItems() {
@@ -2083,6 +2095,24 @@
   }
 
   // Résultats des nouveaux jeux sur la télé (corps de l'écran)
+  // Record absolu de Réflexe : coupe + nom + temps au milieu de la zone libre ; paillettes s'il est battu
+  var CUP = '<svg class="cup" viewBox="0 0 64 64" width="64" height="64"><path d="M18 8h28v14c0 10-6 17-14 17S18 32 18 22z" fill="#F5C518" stroke="#14121F" stroke-width="3" stroke-linejoin="round"/>' +
+    '<path d="M18 12H8c0 10 4 15 12 16M46 12h10c0 10-4 15-12 16" fill="none" stroke="#14121F" stroke-width="3" stroke-linecap="round"/>' +
+    '<rect x="28" y="39" width="8" height="9" fill="#F5C518" stroke="#14121F" stroke-width="3"/><rect x="19" y="48" width="26" height="9" rx="2" fill="#F5C518" stroke="#14121F" stroke-width="3"/></svg>';
+  function rxRecord(cur) {
+    if (!cur.record) return '';
+    var b = cur.broke, conf = '';
+    if (b) {
+      for (var k = 0; k < 70; k++) {
+        conf += '<i style="left:' + (Math.random() * 100).toFixed(1) + '%;background:' + COLORS[k % COLORS.length] + ';animation-delay:' + (Math.random() * 2).toFixed(2) + 's"></i>';
+      }
+    }
+    return '<div class="rxfree"><div class="rxrec' + (b ? ' broke' : '') + '">' + CUP + '<div class="t"><span>' + (b ? 'Nouveau record absolu !' : 'Record absolu de vitesse') + '</span>' +
+      '<div class="hold"><b>' + esc(cur.record.name) + '</b><em>' + cur.record.ms + ' ms</em></div>' +
+      (b ? '<small>bat le record de ' + esc(b.prev.name) + ' (' + b.prev.ms + ' ms)</small>' : '') + '</div></div></div>' +
+      (b ? '<div class="confetti once">' + conf + '</div>' : '');
+  }
+
   function tvNewReveal(cur, res) {
     var S = C.S;
     function rows(list, cells, two) {
@@ -2109,7 +2139,7 @@
         var va = ra.v == null || ra.early ? 1e9 : ra.v, vb = rb.v == null || rb.early ? 1e9 : rb.v;
         return va - vb;
       });
-      return rows(listR, function (r) { return '<span class="v">' + (r.v == null ? '—' : r.early ? 'faux départ' : r.v + ' ms') + '</span>'; });
+      return rows(listR, function (r) { return '<span class="v">' + (r.v == null ? '—' : r.early ? 'faux départ' : r.v + ' ms') + '</span>'; }) + rxRecord(cur);
     }
     if (cur.g === 'memoire') {
       return '<div class="memorev">' + memoGrid((cur.grid || []).map(function (e, i) {

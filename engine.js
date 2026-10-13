@@ -1190,6 +1190,15 @@
         var rk = okR.indexOf(pid), v = answers[pid].v;
         res[pid] = { v: v, early: v < 0, rank: rk, pts: rk < 0 ? 0 : ([30, 20, 10][rk] || 5) * mult };
       });
+      // record absolu de vitesse (toutes parties confondues) ; en dessous de 120 ms : impossible, on l'ignore
+      var rec = this.o.getRecord ? this.o.getRecord('reflexe') : null, bestP = okR.length ? this.player(okR[0]) : null, bestMs = okR.length ? answers[okR[0]].v : 0;
+      if (bestP && bestMs >= 120 && (!rec || bestMs < rec.ms)) {
+        var fresh = { name: bestP.name, ms: bestMs };
+        if (this.o.setRecord) this.o.setRecord('reflexe', fresh);
+        if (rec) cur.broke = { name: bestP.name, ms: bestMs, prev: { name: rec.name, ms: rec.ms } };
+        rec = fresh;
+      }
+      if (rec) cur.record = { name: rec.name, ms: rec.ms };
     } else if (cur.g === 'chrono') {
       var target = cur.n * 1000;
       var rowsC = Object.keys(answers).filter(function (pid) { return res[pid]; }).map(function (pid) {
