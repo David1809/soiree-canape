@@ -239,7 +239,7 @@
   }
 
   // ---------- La Bombe ----------
-  var BOMB_POINTS = 20;
+  var BOMB_POINTS = 5; // par mot trouvé ; celui qui fait exploser la bombe finit la manche à 0
   var BOMB_MIN_MS = 25000, BOMB_SPAN_MS = 20000; // durée de la mèche : 25 à 45 s, secrète
   function bombWord(v) {
     var w = String(v == null ? '' : v).toLowerCase();
@@ -350,6 +350,7 @@
     var p = clone(s);
     delete p.pack;
     delete p.said;
+    delete p.wc;
     p.deck = s.deck.map(function (d) { return d.g; });
     if (p.phase === 'question' || p.phase === 'vote') {
       if (p.cur) {
@@ -674,6 +675,8 @@
       }
       delete s.reject[m.pid];
       s.said.push(bombKey(bw));
+      s.wc = s.wc || {};
+      s.wc[m.pid] = (s.wc[m.pid] || 0) + 1;
       cur.passes = (cur.passes || 0) + 1;
       cur.holder = this.nextHolder(m.pid);
       this.publish(false);
@@ -999,6 +1002,7 @@
       s.cur.passes = 0;
       s.cur.time = fuse; s.cur.deadline = now + fuse; time = fuse;
       s.said = [];
+      s.wc = {};
       delete s.cur.a;
       if (this.o.loadWords) this.o.loadWords(lt.toLowerCase());
     }
@@ -1269,8 +1273,8 @@
     } else if (cur.g === 'bombe') {
       cur.boom = cur.holder;
       s.players.forEach(function (p) {
-        var boom = p.pid === cur.holder;
-        res[p.pid] = { boom: boom, pts: boom ? 0 : BOMB_POINTS * mult };
+        var boom = p.pid === cur.holder, n = (s.wc || {})[p.pid] || 0;
+        res[p.pid] = { boom: boom, n: n, pts: boom ? 0 : n * BOMB_POINTS * mult };
       });
     } else if (cur.g === 'memoire') {
       var goodM = Object.keys(answers).filter(function (pid) { return answers[pid].v === cur.ans; });

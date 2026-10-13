@@ -9717,3 +9717,25 @@ QUESTIONS.drapeaux = [
   { id: 'flzm', a: "Zambie", f: 'zm', d: 3 },
   { id: 'flzw', a: "Zimbabwe", f: 'zw', d: 3 }
 ];
+QUESTIONS.bombe = [
+  { id: 'bo01', l: 'A' },
+  { id: 'bo02', l: 'B' },
+  { id: 'bo03', l: 'C' },
+  { id: 'bo04', l: 'D' },
+  { id: 'bo05', l: 'E' },
+  { id: 'bo06', l: 'F' },
+  { id: 'bo07', l: 'G' },
+  { id: 'bo08', l: 'H' },
+  { id: 'bo09', l: 'I' },
+  { id: 'bo10', l: 'J' },
+  { id: 'bo11', l: 'L' },
+  { id: 'bo12', l: 'M' },
+  { id: 'bo13', l: 'N' },
+  { id: 'bo14', l: 'O' },
+  { id: 'bo15', l: 'P' },
+  { id: 'bo16', l: 'R' },
+  { id: 'bo17', l: 'S' },
+  { id: 'bo18', l: 'T' },
+  { id: 'bo19', l: 'U' },
+  { id: 'bo20', l: 'V' }
+];
