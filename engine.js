@@ -19,7 +19,8 @@
     reflexe: { name: 'Réflexe', time: 15, fixed: true },
     memoire: { name: 'Mémoire flash', time: 15, showTime: 5 },
     geo: { name: 'Géo-Devine', time: 25 },
-    chrono: { name: 'Pile-poil', time: 35, fixed: true }
+    chrono: { name: 'Pile-poil', time: 35, fixed: true },
+    bombe: { name: 'La Bombe', time: 40, fixed: true, min: 2 }
   };
   // duo : seuls deux joueurs jouent ; duo et nofinale : jamais dans la finale (points doubles) ; fixed : chrono indépendant du rythme
   var BAC_POINTS = { unique: 6, shared: 3 };
@@ -237,6 +238,16 @@
     return n ? out : null;
   }
 
+  // ---------- La Bombe ----------
+  var BOMB_POINTS = 20;
+  var BOMB_MIN_MS = 25000, BOMB_SPAN_MS = 20000; // durée de la mèche : 25 à 45 s, secrète
+  function bombWord(v) {
+    var w = String(v == null ? '' : v).toLowerCase();
+    try { w = w.normalize('NFD').replace(/[\u0300-\u036f]/g, ''); } catch (e) {}
+    return w.replace(/\u0153/g, 'oe').replace(/\u00e6/g, 'ae').replace(/[^a-z]/g, '');
+  }
+  function bombKey(w) { return w.replace(/[sx]$/, ''); } // pluriel : même mot
+
   // Finale (points doubles = les 3 dernières épreuves) : jamais un jeu où seuls deux joueurs jouent (Pyramide), ni Croquis.
   function noFinale(g) { return !!(GAMES[g].duo || GAMES[g].nofinale); }
   function fixFinale(deck) {
@@ -338,6 +349,7 @@
   function publicView(s) {
     var p = clone(s);
     delete p.pack;
+    delete p.said;
     p.deck = s.deck.map(function (d) { return d.g; });
     if (p.phase === 'question' || p.phase === 'vote') {
       if (p.cur) {
@@ -443,6 +455,14 @@
     return this.s.players.filter(function (p) { return !p.off; });
   };
 
+  // Porteur suivant de la bombe : joueur présent suivant dans l'ordre du salon
+  Engine.prototype.nextHolder = function (pid) {
+    var ps = this.s.players, n = ps.length, i0 = 0, k;
+    for (k = 0; k < n; k++) if (ps[k].pid === pid) i0 = k;
+    for (k = 1; k <= n; k++) { var p = ps[(i0 + k) % n]; if (!p.off) return p.pid; }
+    return pid;
+  };
+
   // Tout le monde a-t-il joué ? Si oui, on passe à la suite sans attendre le chrono.
   Engine.prototype.checkDone = function () {
     var s = this.s, act = this.active(), cur = s.cur;
@@ -464,6 +484,11 @@
       } else if (cur.g === 'petitbac' && cur.step === 'check') {
         done = act.every(function (p) { return s.checked[p.pid]; });
       } else if (cur.g === 'memoire' && cur.step === 'show') {
+        done = false;
+      } else if (cur.g === 'bombe') {
+        // porteur injoignable : la bombe passe au suivant
+        var hold = this.player(cur.holder);
+        if (!hold || hold.off) { cur.holder = this.nextHolder(cur.holder); this.publish(false); }
         done = false;
       } else done = act.every(function (p) { return s.answers[p.pid]; });
       if (done) { this.closeQuestion(); return true; }
@@ -631,6 +656,27 @@
       var w = cur.cats.map(function (_, i) { return String(v.w[i] == null ? '' : v.w[i]).slice(0, 30); });
       s.answers[m.pid] = { w: w, done: !!v.done, t: now - cur.startedAt };
       if (!v.done || !this.checkDone()) this.publish(false);
+      return;
+    }
+    // La Bombe : seul le porteur joue ; un mot valide fait passer la bombe au suivant
+    if (cur.g === 'bombe') {
+      if (m.pid !== cur.holder) return;
+      var bw = bombWord(v), why = null;
+      s.reject = s.reject || {};
+      s.said = s.said || [];
+      if (bw.length < 3 || bw.charAt(0) !== String(cur.letter).toLowerCase()) why = 'letter';
+      else if (this.o.checkWord && this.o.checkWord(String(cur.letter).toLowerCase(), bw) === false) why = 'unknown';
+      else if (s.said.indexOf(bombKey(bw)) >= 0) why = 'dup';
+      if (why) {
+        s.reject[m.pid] = { why: why, n: (s.reject[m.pid] ? s.reject[m.pid].n : 0) + 1 };
+        this.publish(false);
+        return;
+      }
+      delete s.reject[m.pid];
+      s.said.push(bombKey(bw));
+      cur.passes = (cur.passes || 0) + 1;
+      cur.holder = this.nextHolder(m.pid);
+      this.publish(false);
       return;
     }
     if (s.answers[m.pid]) return;
@@ -945,6 +991,17 @@
       s.bacRej = {};
       delete s.cur.a;
     }
+    if (item.g === 'bombe') {
+      var lt = String(q.l || 'A').toUpperCase(), act0 = this.active(), fuse = BOMB_MIN_MS + Math.floor(Math.random() * BOMB_SPAN_MS);
+      s.cur.letter = lt;
+      s.cur.q = 'Un mot qui commence par ' + lt;
+      s.cur.holder = (act0.length ? act0[Math.floor(Math.random() * act0.length)] : s.players[0]).pid;
+      s.cur.passes = 0;
+      s.cur.time = fuse; s.cur.deadline = now + fuse; time = fuse;
+      s.said = [];
+      delete s.cur.a;
+      if (this.o.loadWords) this.o.loadWords(lt.toLowerCase());
+    }
     if (item.g === 'reflexe') {
       // délai avant le signal, mesuré par chaque téléphone : la connexion ne change rien
       s.cur.wait = 2000 + Math.floor(Math.random() * 4000);
@@ -1208,6 +1265,12 @@
       rowsC.forEach(function (r, i) {
         r.rank = (i > 0 && r.diff === rowsC[i - 1].diff) ? rowsC[i - 1].rank : i;
         res[r.pid] = { v: r.v, diff: r.diff, rank: r.rank, pts: (EST_POINTS[r.rank] || 0) * mult };
+      });
+    } else if (cur.g === 'bombe') {
+      cur.boom = cur.holder;
+      s.players.forEach(function (p) {
+        var boom = p.pid === cur.holder;
+        res[p.pid] = { boom: boom, pts: boom ? 0 : BOMB_POINTS * mult };
       });
     } else if (cur.g === 'memoire') {
       var goodM = Object.keys(answers).filter(function (pid) { return answers[pid].v === cur.ans; });
