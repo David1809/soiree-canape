@@ -19,7 +19,7 @@
     reflexe: { name: 'Réflexe', time: 15, fixed: true },
     memoire: { name: 'Mémoire flash', time: 15, showTime: 5 },
     geo: { name: 'Géo-Devine', time: 25 },
-    chrono: { name: 'Pile-poil', time: 70, fixed: true }
+    chrono: { name: 'Pile-poil', time: 35, fixed: true }
   };
   // duo : seuls deux joueurs jouent (jamais en finale) ; fixed : chrono indépendant du rythme
   var BAC_POINTS = { unique: 6, shared: 3 };
@@ -640,7 +640,7 @@
       if (typeof v !== 'number' || !isFinite(v) || v > 15000) return;
       if (v < 100) v = -1; // parti avant le signal (ou impossible à battre) : faux départ
     } else if (cur.g === 'chrono') {
-      if (typeof v !== 'number' || !isFinite(v) || v < 0 || v > 80000) return;
+      if (typeof v !== 'number' || !isFinite(v) || v < 0 || v > 36000) return;
     } else if (cur.g === 'memoire') {
       if (cur.step !== 'ask' || typeof v !== 'number' || v !== Math.floor(v) || v < 0 || v > 8) return;
       s.answers[m.pid] = { v: v, t: now - (cur.stepAt || cur.startedAt) };
