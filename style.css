@@ -527,7 +527,7 @@ body.tv { overflow: hidden; background-size: 2rem 2rem; }
 .tvw .rxrec .t .hold { display: flex; align-items: baseline; gap: 1rem; }
 
 /* Version du jeu : coin de la télé et accueil des téléphones */
-.ver { position: fixed; right: 0.9rem; bottom: 0.5rem; font-size: 0.85rem; font-weight: 700; color: var(--muted); opacity: 0.6; pointer-events: none; z-index: 5; }
+.ver { position: fixed; right: 0.9rem; bottom: 0.5rem; font-size: 0.85rem; font-weight: 700; color: var(--muted); opacity: 0.6; cursor: pointer; z-index: 5; }
 body.phone .ver:not(.home) { display: none; }
 .ver.home { position: static; text-align: center; margin-top: 4px; font-size: 12px; }
 

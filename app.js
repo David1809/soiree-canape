@@ -2380,6 +2380,44 @@
       '<div class="confetti">' + conf + '</div>');
   }
 
+  // ================= MISE À JOUR FORCÉE =================
+  // Appui sur le numéro de version (téléphone et télé) ; sur la télé, 3 appuis rapides sur OK de la télécommande.
+  // Vide les caches, retire le service worker, puis recharge avec une adresse neuve (la partie en cours est conservée).
+  var updating = false;
+  function forceUpdate() {
+    if (updating) return;
+    updating = true;
+    var els = document.querySelectorAll('.ver');
+    for (var i = 0; i < els.length; i++) els[i].textContent = 'Mise à jour…';
+    var jobs = [];
+    try {
+      if (window.caches && caches.keys) jobs.push(caches.keys().then(function (ks) { return Promise.all(ks.map(function (k) { return caches.delete(k); })); }));
+      if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) jobs.push(navigator.serviceWorker.getRegistrations().then(function (rs) { return Promise.all(rs.map(function (r) { return r.unregister(); })); }));
+    } catch (e) {}
+    var done = false;
+    function reload() {
+      if (done) return;
+      done = true;
+      var q = location.search.replace(/([?&])u=\d+&?/, '$1').replace(/[?&]$/, '');
+      location.replace(location.pathname + (q ? q + '&' : '?') + 'u=' + Date.now());
+    }
+    try { Promise.all(jobs).then(reload, reload); } catch (e) { reload(); }
+    setTimeout(reload, 2500);
+  }
+  document.addEventListener('click', function (e) {
+    for (var t = e.target; t && t !== document; t = t.parentNode) {
+      if (t.className && /(^|\s)ver(\s|$)/.test(String(t.className))) { forceUpdate(); return; }
+    }
+  });
+  var okPresses = [];
+  document.addEventListener('keydown', function (e) {
+    if (!C.tv || (e.keyCode !== 13 && e.key !== 'Enter')) return;
+    var now = Date.now();
+    okPresses.push(now);
+    while (okPresses.length && now - okPresses[0] > 1500) okPresses.shift();
+    if (okPresses.length >= 3) { okPresses = []; forceUpdate(); }
+  });
+
   // ================= ACCUEIL =================
   function showHome() {
     document.body.className = 'phone';
