@@ -93,6 +93,12 @@
 .tvw .prow2 > * + * { margin-left: 1rem; }
 .tvw .drawc > * + * { margin-top: 1rem; margin-left: 0; }
 .tvw .erow > * + * { margin-left: 1rem; }
+.tvw .side.many > * + * { margin-top: 0.4rem; margin-left: 0; }
+.tvw .side.many .srow > * + * { margin-left: 0.7rem; }
+.tvw .players.many > * + * { margin-top: 0.3rem; margin-left: 0; }
+.tvw .players.many .prow2 > * + * { margin-left: 0.8rem; }
+.tvw .podium.many > * + * { margin-top: 0.25rem; margin-left: 0; }
+.tvw .podium.many .pod > * + * { margin-left: 1rem; }
 .tvw .podium > * + * { margin-top: 0.9rem; margin-left: 0; }
 .tvw .pod > * + * { margin-left: 1.4rem; }
 @media (max-height: 680px) {

@@ -4,8 +4,8 @@
 
   var SB_URL = 'https://qsyrrcrknxdkdsxkoooa.supabase.co';
   var SB_KEY = 'sb_publishable_whJtaOQEsL6Q1YqsxtLU5w_mLhX3Ocz';
-  var COLORS = ['#F6C90E', '#E94F37', '#3F88C5', '#44BBA4', '#F28CB8', '#9B7BD4'];
-  var COLOR_NAMES = ['Jaune', 'Rouge', 'Bleu', 'Vert', 'Rose', 'Violet'];
+  var COLORS = ['#F6C90E', '#E94F37', '#3F88C5', '#44BBA4', '#F28CB8', '#9B7BD4', '#F08A24', '#8BC34A'];
+  var COLOR_NAMES = ['Jaune', 'Rouge', 'Bleu', 'Vert', 'Rose', 'Violet', 'Orange', 'Vert clair'];
   var LETTERS = ['A', 'B', 'C', 'D'];
   var LETTERS2 = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
   var CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
@@ -637,13 +637,13 @@
       C.pick = (me.color != null && taken[me.color] === undefined) ? me.color : null;
       for (var c = 0; C.pick == null && c < COLORS.length; c++) if (taken[c] === undefined) C.pick = c;
     }
-    var full = C.S.players.length >= 6 && !findP(me.pid);
+    var full = C.S.players.length >= 8 && !findP(me.pid);
     var fresh = setView('join', '<div class="ph">' +
       '<div><h1 class="title">Dé-lire</h1><div class="muted">Partie <b>' + esc(C.code) + '</b></div></div>' +
       '<div class="stack"><label class="label" for="nm">Ton prénom</label><input id="nm" class="input" maxlength="14" autocomplete="off" value="' + esc(me.name) + '"></div>' +
       '<div class="stack"><span class="label">Ta couleur</span><div class="colors" id="cols"></div></div>' +
       '<div class="grow"></div>' +
-      '<div class="note" id="full"' + (full ? '' : ' hidden') + '>La partie est complète (6 joueurs).</div>' +
+      '<div class="note" id="full"' + (full ? '' : ' hidden') + '>La partie est complète (8 joueurs).</div>' +
       '<button class="btn" id="go"' + (full ? ' disabled' : '') + '>' + (C.editing ? 'Valider' : 'Rejoindre') + '</button>' +
       '<button class="linkbtn" id="back">' + (C.editing ? 'Annuler' : 'Retour à l\'accueil') + '</button>' +
       '</div>');
@@ -1107,7 +1107,7 @@
   }
 
   function flagImg(code, cls) {
-    return '<img class="' + cls + '" src="flags/' + esc(code) + '.svg?v=30" alt="" draggable="false">';
+    return '<img class="' + cls + '" src="flags/' + esc(code) + '.svg?v=31" alt="" draggable="false">';
   }
 
   function ordreItems() {
@@ -1957,8 +1957,9 @@
   function tvLobby() {
     var S = C.S, st = S.settings;
     var key = 'tlobby|' + JSON.stringify([S.players, S.captain, st, !!S.preparing]) + '|' + (DATA.season ? DATA.season.stamp : '');
+    var many = S.players.length > 5;
     var rows = S.players.map(function (p) {
-      return '<div class="prow2">' + avR(p, 3.4) + '<span style="flex:1">' + esc(p.name) + '</span>' +
+      return '<div class="prow2">' + avR(p, many ? 2 : 3.4) + '<span style="flex:1">' + esc(p.name) + '</span>' +
         (p.pid === S.captain ? '<span class="chip" style="font-size:1rem">capitaine</span>' : '') + '</div>';
     }).join('');
     if (S.players.length < 4) rows += '<div class="prow2 empty"><span class="av ghost" style="width:3.4rem;height:3.4rem"></span>En attente des joueurs…</div>';
@@ -1980,8 +1981,8 @@
       '<div class="qrrow"><div class="qr">' + qrSvg(joinUrl()) + '</div><div style="display:flex;flex-direction:column;gap:1rem">' +
       '<div style="font-size:1.7rem;font-weight:600">Scannez avec votre téléphone</div>' +
       '<div class="muted" style="font-size:1.25rem">ou ouvrez ' + esc(location.host + location.pathname.replace(/index\.html$/, '').replace(/\/$/, '')) + ' et entrez le code</div><div class="tiles">' + tiles + '</div></div></div></div>' +
-      '<div class="players"><div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:.4rem"><h2 class="display" style="margin:0;font-size:2.4rem">Joueurs</h2>' +
-      '<span class="muted" style="font-size:1.4rem">' + S.players.length + ' / 6</span></div>' + rows +
+      '<div class="players' + (many ? ' many' : '') + '"><div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:.4rem"><h2 class="display" style="margin:0;font-size:2.4rem">Joueurs</h2>' +
+      '<span class="muted" style="font-size:1.4rem">' + S.players.length + ' / 8</span></div>' + rows +
       '<div style="margin-top:auto;display:flex;flex-direction:column;gap:1rem"><div style="display:flex;gap:.6rem;flex-wrap:wrap">' + chips + '</div>' +
       '<div class="muted" style="font-size:1.25rem">' + who + '</div></div></div></div></div>');
   }
@@ -2260,9 +2261,10 @@
     var teams = t ? '<div style="display:flex;gap:.6rem;margin-bottom:.4rem">' + t.map(function (x, i) {
       return '<div class="tteam t' + i + '"><span>Équipe ' + 'AB'.charAt(i) + '</span><b>' + x.pts + '</b></div>';
     }).join('') + '</div>' : '';
-    return '<div class="side"><h3>Classement</h3>' + teams + ranked().map(function (p, i) {
+    var many = C.S.players.length > 5;
+    return '<div class="side' + (many ? ' many' : '') + '"><h3>Classement</h3>' + teams + ranked().map(function (p, i) {
       var g = res[p.pid] && res[p.pid].pts ? '+' + res[p.pid].pts : '';
-      return '<div class="srow"><span class="muted" style="width:1.6rem">' + (i + 1) + '</span>' + avR(p, 2.6) + '<span class="n">' + esc(p.name) + '</span><span class="g">' + g + '</span><span class="p">' + p.score + '</span></div>';
+      return '<div class="srow"><span class="muted" style="width:1.6rem">' + (i + 1) + '</span>' + avR(p, many ? 1.9 : 2.6) + '<span class="n">' + esc(p.name) + '</span><span class="g">' + g + '</span><span class="p">' + p.score + '</span></div>';
     }).join('') + (extra || '') + '</div>';
   }
 
@@ -2362,7 +2364,7 @@
     for (var i = n - 1; i >= 0; i--) {
       var p = rk[i], delay = (n - 1 - i) * 1.6;
       var tt = ((S.titles || {})[p.pid] || []).map(function (t) { return t.name; }).join(' · ');
-      html += '<div class="pod' + (i === 0 ? ' first' : '') + '" style="animation-delay:' + delay + 's"><span class="rk">' + (i + 1) + '</span>' + avR(p, i === 0 ? 4.4 : 3.2) +
+      html += '<div class="pod' + (i === 0 ? ' first' : '') + '" style="animation-delay:' + delay + 's"><span class="rk">' + (i + 1) + '</span>' + avR(p, n > 5 ? (i === 0 ? 3 : 2) : (i === 0 ? 4.4 : 3.2)) +
         '<span class="n">' + esc(p.name) + (tt ? '<span class="ttl">' + esc(tt) + '</span>' : '') + '</span><span class="s">' + p.score + ' pts</span></div>';
     }
     var conf = '', start = n * 1.6;
@@ -2372,9 +2374,9 @@
     var t = teamTotals(), title = 'Classement final';
     if (t) title = t[0].pts === t[1].pts ? 'Égalité entre les équipes !' : 'Victoire de l\'équipe ' + (t[0].pts > t[1].pts ? 'A' : 'B') + ' !';
     var champ = DATA.season && DATA.season.rows.length ? DATA.season.label + ' · en tête : ' + DATA.season.rows[0].name + ' (' + DATA.season.rows[0].wins + ' victoire' + (DATA.season.rows[0].wins > 1 ? 's' : '') + ')' : '';
-    setView('tfin|' + JSON.stringify(S.players) + '|' + (DATA.season ? DATA.season.stamp : ''), '<div class="tvw"><h1 class="display" style="margin:0;font-size:3.4rem;text-align:center">' + esc(title) + '</h1>' +
+    setView('tfin|' + JSON.stringify(S.players) + '|' + (DATA.season ? DATA.season.stamp : ''), '<div class="tvw"><h1 class="display" style="margin:0;font-size:' + (n > 5 ? '2.6rem' : '3.4rem') + ';text-align:center">' + esc(title) + '</h1>' +
       (t ? '<div style="display:flex;gap:1rem;justify-content:center">' + t.map(function (x, i) { return '<div class="tteam t' + i + '"><span>Équipe ' + 'AB'.charAt(i) + ' · ' + esc(x.names.join(', ')) + '</span><b>' + x.pts + '</b></div>'; }).join('') + '</div>' : '') +
-      '<div class="podium">' + html + '</div><div class="muted" style="text-align:center;font-size:1.3rem">' + (champ ? esc(champ) + ' — ' : '') + esc(capName()) + ' choisit : revanche ou retour au salon</div></div>' +
+      '<div class="podium' + (n > 5 ? ' many' : '') + '">' + html + '</div><div class="muted" style="text-align:center;font-size:1.3rem">' + (champ ? esc(champ) + ' — ' : '') + esc(capName()) + ' choisit : revanche ou retour au salon</div></div>' +
       '<div class="confetti">' + conf + '</div>');
   }
 

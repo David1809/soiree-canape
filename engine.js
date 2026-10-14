@@ -32,8 +32,8 @@
   var LIE_MAX = 60;
   var EST_POINTS = [30, 20, 10, 0];
   var DRAW_MS = 3500;
-  var MAX_PLAYERS = 6;
-  var COLOR_COUNT = 6;
+  var MAX_PLAYERS = 8;
+  var COLOR_COUNT = 8;
 
   function shuffle(a) {
     for (var i = a.length - 1; i > 0; i--) {
