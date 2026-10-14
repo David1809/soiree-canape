@@ -1107,7 +1107,7 @@
   }
 
   function flagImg(code, cls) {
-    return '<img class="' + cls + '" src="flags/' + esc(code) + '.svg?v=30" alt="" draggable="false">';
+    return '<img class="' + cls + '" src="flags/' + esc(code) + '.svg?v=31" alt="" draggable="false">';
   }
 
   function ordreItems() {
@@ -1959,7 +1959,7 @@
     var key = 'tlobby|' + JSON.stringify([S.players, S.captain, st, !!S.preparing]) + '|' + (DATA.season ? DATA.season.stamp : '');
     var many = S.players.length > 5;
     var rows = S.players.map(function (p) {
-      return '<div class="prow2">' + avR(p, many ? 2.3 : 3.4) + '<span style="flex:1">' + esc(p.name) + '</span>' +
+      return '<div class="prow2">' + avR(p, many ? 2 : 3.4) + '<span style="flex:1">' + esc(p.name) + '</span>' +
         (p.pid === S.captain ? '<span class="chip" style="font-size:1rem">capitaine</span>' : '') + '</div>';
     }).join('');
     if (S.players.length < 4) rows += '<div class="prow2 empty"><span class="av ghost" style="width:3.4rem;height:3.4rem"></span>En attente des joueurs…</div>';
@@ -2364,7 +2364,7 @@
     for (var i = n - 1; i >= 0; i--) {
       var p = rk[i], delay = (n - 1 - i) * 1.6;
       var tt = ((S.titles || {})[p.pid] || []).map(function (t) { return t.name; }).join(' · ');
-      html += '<div class="pod' + (i === 0 ? ' first' : '') + '" style="animation-delay:' + delay + 's"><span class="rk">' + (i + 1) + '</span>' + avR(p, n > 5 ? (i === 0 ? 3.2 : 2.3) : (i === 0 ? 4.4 : 3.2)) +
+      html += '<div class="pod' + (i === 0 ? ' first' : '') + '" style="animation-delay:' + delay + 's"><span class="rk">' + (i + 1) + '</span>' + avR(p, n > 5 ? (i === 0 ? 3 : 2) : (i === 0 ? 4.4 : 3.2)) +
         '<span class="n">' + esc(p.name) + (tt ? '<span class="ttl">' + esc(tt) + '</span>' : '') + '</span><span class="s">' + p.score + ' pts</span></div>';
     }
     var conf = '', start = n * 1.6;
