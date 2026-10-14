@@ -8,7 +8,7 @@
   var CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
   var STALE_MS = 12 * 3600 * 1000;
   var SCOL = ['#3DD9EB', '#FFB454', '#B79CFF', '#FF7A93', '#7DE0A0', '#9FB6FF'];
-  var PHOTO = ['badges/mathias.jpg', 'badges/david.jpg', 'badges/lea.jpg', 'badges/christelle.jpg'];
+  var PHOTO = ['badges/mathias.jpg', 'badges/david.jpg', 'badges/lea.jpg', 'badges/christelle.jpg', 'badges/android.jpg', 'badges/ia.jpg'];
   var STEPLBL = { move: 'Déplacement', suspect: 'Soupçon', refute: 'Réfutation', after: 'Fin de tour' };
 
   var app = document.getElementById('app');
@@ -53,7 +53,7 @@
   // ---------- badges ----------
   function badge(sid, size, cls) {
     var c = SCOL[sid] || SCOL[0], st = 'width:' + size + 'px;height:' + size + 'px;--c:' + c;
-    if (sid >= 0 && sid < 4) return '<img class="bd ' + (cls || '') + '" style="' + st + '" src="' + PHOTO[sid] + '" alt="' + esc(E.SUSPECTS[sid]) + '">';
+    if (sid >= 0 && sid < 6) return '<img class="bd ' + (cls || '') + '" style="' + st + '" src="' + PHOTO[sid] + '" alt="' + esc(E.SUSPECTS[sid]) + '">';
     return '<span class="bdai ' + (cls || '') + '" style="' + st + ';font-size:' + Math.round(size * 0.34) + 'px">' + (sid === 4 ? 'AN' : 'IA') + '</span>';
   }
   function cardBadge(c, size) { return c < 6 ? badge(c, size) : ''; }
