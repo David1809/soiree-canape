@@ -20,5 +20,5 @@ Données en ligne : Supabase (projet `qsyrrcrknxdkdsxkoooa`). Langue de travail 
 ## Décisions déjà prises (ne pas rediscuter)
 - Jusqu'à 8 joueurs par salon ; stats/classement partagés entre familles (pas de cloisonnement).
 - Pas d'API Claude dans le jeu. Jeu « titres de films » abandonné (14 oct. 2026).
-- Finale : tous les jeux sauf Pyramide et Croquis, 3 dernières manches comptées double (règle à confirmer avec David).
+- Finale : tous les jeux sauf Pyramide et Croquis, 3 dernières manches comptées double (règle confirmée par David le 14 oct. 2026).
 - « Soirée Mystère » (dossier `mystere/`) : autre jeu, même socle.
