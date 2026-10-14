@@ -2389,7 +2389,6 @@
       '<div class="stack"><label class="label" for="code">Rejoindre une partie</label><input id="code" class="input code" maxlength="4" placeholder="CODE" autocomplete="off" autocapitalize="characters">' +
       '<button class="btn" id="join">Rejoindre</button></div>' +
       '<div class="stack" style="margin-top:14px"><button class="btn ghost col" id="mk"><span>Créer une partie ici</span><span class="sub">Sans télé : ce téléphone sert de plateau</span></button>' +
-      '<button class="btn ghost col" id="tvb"><span>Ouvrir l\'écran télé</span><span class="sub">À lancer depuis le navigateur de la télé</span></button>' +
       '<button class="linkbtn" id="hseason">🏆 Classement de la saison</button></div><div class="ver home">' + APP_VERSION + '</div></div>';
     function go() {
       var c = $('code').value.toUpperCase().replace(/[^A-Z]/g, '');
@@ -2399,7 +2398,6 @@
     on('join', 'click', go);
     on('code', 'keydown', function (e) { if (e.key === 'Enter') go(); });
     on('mk', 'click', function () { createRoom(false); });
-    on('tvb', 'click', function () { location.href = location.pathname + '?tv'; });
     on('hseason', 'click', showSeasonHome);
     fit();
   }
