@@ -152,6 +152,11 @@
 .tvw .memo.tv > *:nth-child(3n+1) { margin-left: 0; }
 .tvw .memo.tv > *:nth-child(n+4) { margin-top: 0.8rem; }
 .tvw .georev > * + * { margin-top: 1rem; margin-left: 0; }
+.ph.geo > * + * { margin-left: 10px; }
+.gctl > * + * { margin-top: 8px; margin-left: 0; }
+@media (orientation: landscape) and (max-height: 600px) {
+  .ph.geo > * + * { margin-left: 0; }
+}
 .chronohead > * + * { margin-top: 6px; margin-left: 0; }
 .tvw .chronotv > * + * { margin-top: 1rem; margin-left: 0; }
 .gtiles { display: block; font-size: inherit; }

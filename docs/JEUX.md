@@ -14,7 +14,7 @@
 | petitbac | Petit Bac | unique 6 pts / partagé 3 pts, vérification collective |
 | reflexe | Réflexe | chrono fixe 15 s |
 | memoire | Mémoire flash | grille d'emojis |
-| geo | Géo-Devine | cliquer sur la carte, points selon la distance |
+| geo | Géo-Devine | toucher la carte pour poser l'épingle (glisser/pincer pour déplacer/zoomer, attraper l'épingle pour l'ajuster, paysage possible), points selon la distance |
 | chrono | Pile-poil | chrono fixe |
 | bombe | La Bombe | mots à contenir une syllabe, chrono fixe |
 

@@ -7,6 +7,7 @@
 | `style.css` / `old.css` | 550 l. | Styles ; `old.css` est GÉNÉRÉ (ne pas éditer) | `python3 tools/make_old_css.py` |
 | `questions.js` | 900 Ko | Banque de questions locale | Jamais en entier : `grep -n "texte"` |
 | `geo.js` | 84 Ko | Cartes du jeu Géo-Devine | idem |
+| `geoview.js` | 4 Ko | Calculs de la vue de la carte (zoom, glisser, pincer, conversions écran/carte) ; testé par `tests/geoview.test.js` | en entier |
 | `words/<lettre>.txt` | 26 fichiers | Dictionnaire (minuscules, sans accents) pour Petit Bac, Rébus, Croquis | chargé à la demande par `o.loadWords` |
 | `flags/*.svg` | | Drapeaux (licence flag-icons) | |
 | `vendor/` | | supabase.js, qrcode.js, legacy.js (compat. vieille télé) | ne pas modifier |

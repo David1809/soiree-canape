@@ -539,6 +539,7 @@
 
   function setView(key, html) {
     if (C.view === key) return false;
+    if ((C.geoLocked || C.geoFs) && key.indexOf('geo|') !== 0) geoUnlock();
     C.view = key;
     app.innerHTML = html;
     window.scrollTo(0, 0);
@@ -557,6 +558,7 @@
     if (!el || !el.classList || !el.classList.contains('ph')) return;
     el.style.zoom = '';
     el.style.minHeight = '';
+    if (el.classList.contains('geo')) return;
     var sh = el.scrollHeight;
     if (sh > h + 1) {
       var z = Math.max(0.7, h / sh);
@@ -1718,41 +1720,236 @@
     return '<svg id="' + id + '" class="map" viewBox="' + (opts.vb || ('0 0 ' + GEO.w + ' ' + GEO.h)) + '" preserveAspectRatio="xMidYMid meet"><rect x="-500" y="-500" width="2000" height="1400" class="sea"/>' +
       '<g class="land">' + paths + '</g><g id="' + id + 'm">' + marks + '</g></svg>';
   }
-  function phoneGeo() {
-    var S = C.S, cur = S.cur, ans = answeredSet();
-    if (!C.geo || C.geo.round !== S.round) C.geo = { round: S.round, zoom: null, pin: null, sent: false };
-    var g = C.geo, done = g.sent || ans[me.pid];
-    var key = 'geo|' + S.round + '|' + (done ? 1 : 0) + '|' + (g.zoom ? g.zoom.join(',') : '') + '|' + (g.pin ? 1 : 0);
-    var vb = g.zoom ? g.zoom.join(' ') : null;
-    var p = findP(me.pid);
-    var marks = g.pin ? [{ x: g.pin[0], y: g.pin[1], c: COLORS[p ? p.color : 0], r: g.zoom ? 4 : 7 }] : [];
-    var help = done ? 'Position envoyée' : !g.zoom ? '1. Touche la zone pour zoomer' : !g.pin ? '2. Touche l\'endroit exact' : 'Ça te va ?';
-    var fresh = setView(key, '<div class="ph">' + topbar() + headRow('Géo-Devine') +
-      '<div class="geoq"><span>Où se trouve</span><b>' + esc(cur.q) + '</b></div>' +
-      '<div class="mapbox">' + mapSvg('gmap', { vb: vb, marks: marks }) + '</div>' +
-      '<div class="muted" style="text-align:center;font-weight:700">' + help + '</div>' +
-      (done ? '' : '<div class="duo-btns"><button class="btn ghost" id="gback"' + (g.zoom ? '' : ' disabled') + '>Dézoomer</button><button class="btn" id="gok"' + (g.pin ? '' : ' disabled') + '>Valider</button></div>') +
-      '<div class="grow"></div><div class="note" id="stat"></div></div>');
-    $('stat').textContent = done ? statLine(true, (S.answered || []).length) : 'Plus tu es près, plus tu marques';
-    fit();
-    if (!fresh || done) return;
-    $('gmap').addEventListener('click', function (e) {
-      var svg = $('gmap'), r = svg.getBoundingClientRect();
-      var v = g.zoom || [0, 0, GEO.w, GEO.h];
-      // la carte garde ses proportions dans le cadre : on retrouve la zone réellement dessinée
-      var sc = Math.min(r.width / v[2], r.height / v[3]);
-      var ox = (r.width - v[2] * sc) / 2, oy = (r.height - v[3] * sc) / 2;
-      var x = v[0] + (e.clientX - r.left - ox) / sc, y = v[1] + (e.clientY - r.top - oy) / sc;
-      if (!g.zoom) {
-        var w = GEO.w / 3.2, h = GEO.h / 3.2;
-        g.zoom = [Math.round(Math.max(0, Math.min(GEO.w - w, x - w / 2))), Math.round(Math.max(0, Math.min(GEO.h - h, y - h / 2))), Math.round(w), Math.round(h)];
+  // Écran téléphone : carte plein cadre, glisser pour déplacer, pincer pour zoomer, toucher pour poser
+  // l'épingle, attraper l'épingle pour l'ajuster (elle se décale au-dessus du doigt). Calculs : geoview.js.
+  var GEO_LIFT = 56;  // décalage de l'épingle attrapée, au-dessus du doigt (px)
+  var GEO_GRAB = 40;  // distance (px) à laquelle on attrape l'épingle
+  var GEO_TAP_ZOOM = 3.2; // un premier toucher de loin rapproche la vue de ce facteur
+  C.geoLocked = false; C.geoFs = false; C.geoRotFail = false; C.geoMsg = '';
+
+  function geoBox() {
+    var el = $('gmap');
+    if (!el) return null;
+    var r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 ? { w: r.width, h: r.height, left: r.left, top: r.top } : null;
+  }
+  function geoHelp(g) {
+    if (C.geoMsg) return C.geoMsg;
+    if (g.sent || (C.S && answeredSet()[me.pid])) return 'Position envoyée';
+    return g.pin ? 'Attrape l\'épingle pour l\'ajuster, puis valide' : 'Touche la carte · pince pour zoomer · plus tu es près, plus tu marques';
+  }
+  function geoCanRotate() {
+    try {
+      return !!(window.screen && screen.orientation && typeof screen.orientation.lock === 'function' &&
+        window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+    } catch (e) { return false; }
+  }
+  // Met l'écran à jour d'après l'état C.geo : vue, épingle, boutons, aide
+  function geoApply() {
+    var g = C.geo, box = geoBox();
+    if (!g || !box || !$('gbox')) return;
+    g.v = g.v ? GeoView.clampView(g.v, GEO, box) : GeoView.fullView(GEO, box);
+    $('gmap').setAttribute('viewBox', GeoView.viewBox(g.v, box));
+    var pin = $('gpin');
+    if (pin) {
+      if (g.pin) {
+        var s = GeoView.toScreen(g.v, box, g.pin[0], g.pin[1]);
+        pin.style.display = 'block';
+        pin.style.transform = 'translate(' + s.x.toFixed(1) + 'px,' + s.y.toFixed(1) + 'px)';
       } else {
-        g.pin = [Math.round(x), Math.round(y)];
+        pin.style.display = 'none';
       }
+    }
+    var gb = $('gback'); if (gb) gb.disabled = GeoView.isFull(g.v, GEO, box);
+    var ok = $('gok'); if (ok) ok.disabled = !g.pin;
+    var hp = $('ghelp'); if (hp) hp.textContent = geoHelp(g);
+    var rb = $('grot');
+    if (rb) {
+      var show = !C.geoRotFail && (C.geoLocked || (geoCanRotate() && window.innerHeight > window.innerWidth));
+      rb.style.display = show ? '' : 'none';
+      rb.textContent = C.geoLocked ? 'Portrait' : 'Paysage';
+    }
+  }
+  function geoSay(msg) {
+    C.geoMsg = msg;
+    geoApply();
+    setTimeout(function () { C.geoMsg = ''; geoApply(); }, 4500);
+  }
+  // Rotation : uniquement si le téléphone le permet (verrouillage d'orientation de Chrome Android).
+  function geoRotate() {
+    if (C.geoLocked) { geoUnlock(); return; }
+    var de = document.documentElement;
+    var standalone = false;
+    try { standalone = !!(window.matchMedia && window.matchMedia('(display-mode: standalone)').matches); } catch (e) {}
+    var reqFs = standalone ? null : (de.requestFullscreen || de.webkitRequestFullscreen);
+    function fail() {
+      C.geoRotFail = true;
+      if (C.geoFs) { C.geoFs = false; try { (document.exitFullscreen || document.webkitExitFullscreen).call(document); } catch (e) {} }
+      geoSay('Rotation impossible ici : tourne ton téléphone à la main');
+    }
+    function lock() {
+      var pr = null;
+      try { pr = screen.orientation.lock('landscape'); } catch (e) { pr = null; }
+      if (pr && pr.then) pr.then(function () { C.geoLocked = true; geoApply(); }, fail); else fail();
+    }
+    if (reqFs) {
+      var r = null;
+      try { r = reqFs.call(de); } catch (e) { r = null; }
+      C.geoFs = true;
+      if (r && r.then) r.then(lock, fail); else lock();
+    } else {
+      lock();
+    }
+  }
+  function geoUnlock() {
+    if (!C.geoLocked && !C.geoFs) return;
+    C.geoLocked = false;
+    try { screen.orientation.unlock(); } catch (e) {}
+    if (C.geoFs) { C.geoFs = false; try { (document.exitFullscreen || document.webkitExitFullscreen).call(document); } catch (e2) {} }
+    geoApply();
+  }
+  window.addEventListener('resize', function () { if (C.geo && $('gmap')) { geoApply(); setTimeout(geoApply, 150); } });
+  document.addEventListener('fullscreenchange', function () {
+    if (C.geoFs && !document.fullscreenElement) { C.geoFs = false; C.geoLocked = false; geoApply(); }
+  });
+
+  function geoBind(g, round) {
+    var area = $('gbox'), pts = {}, st = null;
+    function rect() { return geoBox(); }
+    function count() { var n = 0, k; for (k in pts) if (pts.hasOwnProperty(k)) n++; return n; }
+    function twoPts() { var a = [], k; for (k in pts) if (pts.hasOwnProperty(k)) a.push(pts[k]); return a.length >= 2 ? a : null; }
+    function dist(a, b) { return Math.sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y)); }
+    function startPinch(b) {
+      var q = twoPts();
+      if (!q) return;
+      st = { mode: 'pinch', moved: true, v0: g.v, d0: Math.max(dist(q[0], q[1]), 1),
+        m0: { x: (q[0].x + q[1].x) / 2 - b.left, y: (q[0].y + q[1].y) / 2 - b.top } };
+    }
+    function tap(b, p) {
+      var m = GeoView.toMap(g.v, b, p.x - b.left, p.y - b.top);
+      g.pin = GeoView.clampPoint(GEO, m.x, m.y);
+      // premier toucher depuis la vue d'ensemble : on rapproche la vue autour de l'épingle
+      if (g.v.w > GEO.w / 2.5) g.v = GeoView.zoomOn(g.v, GEO, b, GEO_TAP_ZOOM, g.pin[0], g.pin[1]);
+      geoApply();
+    }
+    area.addEventListener('pointerdown', function (e) {
+      if (e.target.closest && e.target.closest('.gb')) return; // boutons posés sur la carte
+      var b = rect();
+      if (!b) return;
+      pts[e.pointerId] = { x: e.clientX, y: e.clientY };
+      try { area.setPointerCapture(e.pointerId); } catch (err) {}
+      var n = count();
+      if (n === 1) {
+        var grab = false;
+        if (g.pin) {
+          var ps = GeoView.toScreen(g.v, b, g.pin[0], g.pin[1]);
+          grab = dist({ x: ps.x + b.left, y: ps.y + b.top }, pts[e.pointerId]) <= GEO_GRAB;
+        }
+        st = { mode: grab ? 'pin' : 'pan', x: e.clientX, y: e.clientY, t: Date.now(), moved: false, v0: g.v };
+      } else if (n === 2) {
+        startPinch(b);
+      }
+      e.preventDefault();
+    });
+    area.addEventListener('pointermove', function (e) {
+      if (!st || !pts[e.pointerId]) return;
+      pts[e.pointerId] = { x: e.clientX, y: e.clientY };
+      var b = rect();
+      if (!b) return;
+      if (st.mode === 'pinch') {
+        var q = twoPts();
+        if (!q) return;
+        g.v = GeoView.pinch(st.v0, GEO, b, st.d0, st.m0, dist(q[0], q[1]),
+          { x: (q[0].x + q[1].x) / 2 - b.left, y: (q[0].y + q[1].y) / 2 - b.top });
+        geoApply();
+        return;
+      }
+      var dx = e.clientX - st.x, dy = e.clientY - st.y;
+      if (!st.moved && Math.abs(dx) + Math.abs(dy) < 8) return;
+      st.moved = true;
+      if (st.mode === 'pin') {
+        var m = GeoView.toMap(g.v, b, e.clientX - b.left, e.clientY - b.top - GEO_LIFT);
+        g.pin = GeoView.clampPoint(GEO, m.x, m.y);
+      } else {
+        g.v = GeoView.panBy(st.v0, GEO, b, dx, dy);
+      }
+      geoApply();
+    });
+    function release(e, cancelled) {
+      var last = pts[e.pointerId];
+      if (!last) return;
+      delete pts[e.pointerId];
+      var b = rect(), n = count();
+      if (n === 1 && b) {
+        // il reste un doigt après un pincement : on continue en glissant, sans saut
+        var k, rest = null;
+        for (k in pts) if (pts.hasOwnProperty(k)) rest = pts[k];
+        st = { mode: 'pan', x: rest.x, y: rest.y, t: 0, moved: true, v0: g.v };
+      } else if (n === 0) {
+        if (st && b && !cancelled && st.mode !== 'pinch' && !st.moved && Date.now() - st.t < 700) tap(b, last);
+        st = null;
+      }
+    }
+    area.addEventListener('pointerup', function (e) { release(e, false); });
+    area.addEventListener('pointercancel', function (e) { release(e, true); });
+    area.addEventListener('wheel', function (e) {
+      var b = rect();
+      if (!b) return;
+      e.preventDefault();
+      g.v = GeoView.zoomAt(g.v, GEO, b, e.deltaY < 0 ? 1.3 : 1 / 1.3, e.clientX - b.left, e.clientY - b.top);
+      geoApply();
+    }, false);
+    on('gzi', 'click', function () {
+      var b = rect();
+      if (!b) return;
+      g.v = g.pin ? GeoView.zoomOn(g.v, GEO, b, 1.8, g.pin[0], g.pin[1]) : GeoView.zoomAt(g.v, GEO, b, 1.8, b.w / 2, b.h / 2);
+      geoApply();
+    });
+    on('gzo', 'click', function () {
+      var b = rect();
+      if (!b) return;
+      g.v = GeoView.zoomAt(g.v, GEO, b, 1 / 1.8, b.w / 2, b.h / 2);
+      geoApply();
+    });
+    on('grot', 'click', geoRotate);
+    on('gback', 'click', function () { var b = rect(); if (b) { g.v = GeoView.fullView(GEO, b); geoApply(); } });
+    on('gok', 'click', function () {
+      if (!g.pin || g.sent) return;
+      g.sent = true;
+      send({ t: 'answer', round: round, val: g.pin });
       render();
     });
-    on('gback', 'click', function () { g.zoom = null; g.pin = null; render(); });
-    on('gok', 'click', function () { if (!g.pin) return; g.sent = true; send({ t: 'answer', round: S.round, val: g.pin }); render(); });
+  }
+
+  function phoneGeo() {
+    var S = C.S, cur = S.cur, ans = answeredSet();
+    if (!C.geo || C.geo.round !== S.round) C.geo = { round: S.round, v: null, pin: null, sent: false };
+    var g = C.geo, done = g.sent || ans[me.pid];
+    var p = findP(me.pid);
+    var ctl = done ? '' : '<div class="gctl"><button type="button" class="gb" id="gzi" aria-label="Zoom avant">+</button>' +
+      '<button type="button" class="gb" id="gzo" aria-label="Zoom arrière">−</button></div>' +
+      '<button type="button" class="gb gb-rot" id="grot" style="display:none">Paysage</button>';
+    var fresh = setView('geo|' + S.round + '|' + (done ? 1 : 0), '<div class="ph geo">' + topbar() + headRow('Géo-Devine') +
+      '<div class="geoq"><span>Où se trouve</span><b>' + esc(cur.q) + '</b></div>' +
+      '<div class="mapbox geomap" id="gbox">' + mapSvg('gmap', {}) +
+      '<div class="gpin" id="gpin" style="--pc:' + COLORS[p ? p.color : 0] + '"><b></b></div>' + ctl + '</div>' +
+      '<div class="muted ghelp" id="ghelp"></div>' +
+      (done ? '' : '<div class="duo-btns"><button class="btn ghost" id="gback" disabled>Dézoomer</button><button class="btn" id="gok" disabled>Valider</button></div>') +
+      (done ? '<div class="note" id="stat"></div>' : '') + '</div>');
+    var st = $('stat');
+    if (st) st.textContent = statLine(true, (S.answered || []).length);
+    fit();
+    geoApply();
+    if (!fresh) return;
+    // le cadre peut encore changer de taille juste après l'affichage (polices, barre du navigateur, rotation)
+    setTimeout(geoApply, 60);
+    if (window.ResizeObserver) {
+      if (C.geoRO) C.geoRO.disconnect();
+      C.geoRO = new ResizeObserver(function () { geoApply(); });
+      C.geoRO.observe($('gbox'));
+    }
+    if (done) return;
+    geoBind(g, S.round);
   }
 
   // ---------- La Bombe ----------

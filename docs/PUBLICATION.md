@@ -2,8 +2,8 @@
 
 1. Tests : `sh tests/run.sh` (tous « OK »).
 2. Monter le numéro (NN → NN+1) :
-   - `index.html` : 9 occurrences de `?v=NN`
-   - `app.js` : 1 occurrence (`app.js?v=NN` dans la détection de version)
+   - `index.html` : 10 occurrences de `?v=NN` (dont `geoview.js`)
+   - `app.js` : rien à changer (la version est lue dans la balise `<script src="app.js?v=NN">`)
    - `sw.js` : `CACHE = 'soiree-canape-vNN'`
    - Vérifier : `grep -o "?v=[0-9]*" index.html | sort | uniq -c`
 3. Si le CSS a changé : `python3 tools/make_old_css.py` (nouvelles règles de colonne : écrire `flex-direction: column` explicitement).
