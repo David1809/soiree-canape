@@ -1,6 +1,6 @@
 # Dé-lire — jeu de soirée en famille
 
-Appli web statique (JS ES5 sans framework), hébergée sur GitHub Pages, branche `main` = en ligne.
+Appli web statique (JS ES5 sans framework), hébergée sur Netlify (https://jeux-famille.netlify.app, projet `jeux-famille`, republié à chaque push sur `main`). Ancienne adresse GitHub Pages : `david1809.github.io/soiree-canape` (à laisser ou rediriger).
 Téléphones = manettes ; une télé (vieille Samsung Tizen, Chrome 56) peut servir de tableau commun.
 Données en ligne : Supabase (projet `qsyrrcrknxdkdsxkoooa`). Langue de travail : français.
 
