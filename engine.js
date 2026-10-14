@@ -86,6 +86,13 @@
     return lev(x, y) <= (L <= 4 ? 0 : L <= 7 ? 1 : L <= 15 ? 2 : 3);
   }
 
+  // Un mot « nu » : minuscules, sans accents, lettres seulement (comme le dictionnaire de La Bombe).
+  function plainWord(str) {
+    var t = String(str == null ? '' : str).toLowerCase();
+    if (t.normalize) t = t.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    return t.replace(/œ/g, 'oe').replace(/æ/g, 'ae').replace(/[^a-z]+/g, '');
+  }
+
   // Mots connus (toutes les banques de mots), sous forme phonétique.
   function knownWords(bank) {
     if (!bank) return {};
@@ -968,6 +975,9 @@
       s.feed = [];
       s.fb = {};
     }
+    if ((item.g === 'rebus' || item.g === 'croquis') && this.o.loadWords) {
+      [q.a].concat(q.alt || []).forEach(function (w) { var l = plainWord(w).charAt(0); if (l) this.o.loadWords(l); }, this);
+    }
     if (item.g === 'rebus') {
       s.cur.e = q.e;
       s.cur.cat = q.c;
@@ -1147,6 +1157,12 @@
     if (!normText(text)) return;
     var words = [cur.a].concat(cur.alt || []);
     var ok = cur.g === 'rebus' ? matchGuess(text, words, null) : matchGuess(text, words, knownWords(this.o.bank));
+    // Un autre vrai mot du dictionnaire n'est pas une faute de frappe (« pompiste » pour « pompier »).
+    if (ok && this.o.checkWord && !/[\s-]/.test(text)) {
+      var gx = phon(normText(text)), plain = plainWord(text);
+      var exact = words.some(function (w) { return phon(normText(w)) === gx; });
+      if (!exact && plain && this.o.checkWord(plain.charAt(0), plain) === true) ok = false;
+    }
     var prev = s.fb[m.pid] ? s.fb[m.pid].n : 0;
     if (ok) {
       cur.found.push({ pid: m.pid, t: this.now() - cur.startedAt });
