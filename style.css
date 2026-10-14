@@ -246,6 +246,15 @@ body.tv { overflow: hidden; background-size: 2rem 2rem; }
 .tvw .erow .v { flex: 1; font-family: var(--display); font-weight: 700; }
 .tvw .erow .d { color: var(--muted); width: 12rem; text-align: right; font-weight: 700; }
 .tvw .erow .g { color: var(--good-ink); font-weight: 800; width: 5rem; text-align: right; }
+.tvw .side.many { padding: 1.1rem 1.4rem; gap: 0.4rem; }
+.tvw .side.many h3 { font-size: 1.6rem; margin: 0; }
+.tvw .side.many .srow { font-size: 1.25rem; gap: 0.7rem; }
+.tvw .players.many { padding: 1.2rem 1.6rem; gap: 0.45rem; }
+.tvw .players.many .prow2 { padding: 0.2rem 0.9rem; gap: 0.8rem; font-size: 1.35rem; border-width: 2px; }
+.tvw .podium.many { gap: 0.35rem; }
+.tvw .podium.many .pod { padding: 0.15rem 1.2rem; font-size: 1.5rem; gap: 1rem; box-shadow: 0.3rem 0.3rem 0 var(--ink); }
+.tvw .podium.many .pod.first { padding: 0.35rem 1.4rem; font-size: 2rem; }
+.tvw .podium.many .pod .ttl { font-size: 1.05rem; }
 .tvw .podium { display: flex; flex-direction: column; gap: 0.9rem; margin: auto; width: 52rem; }
 .tvw .pod { display: flex; align-items: center; gap: 1.4rem; padding: 0.7rem 1.5rem; border-radius: 1.2rem; background: var(--paper); border: 3px solid var(--ink); box-shadow: 0.4rem 0.4rem 0 var(--ink); font-size: 1.8rem; opacity: 0; animation: rise 0.7s ease-out forwards; }
 .tvw .pod .rk { font-family: var(--display); font-weight: 700; color: var(--muted); width: 2.4rem; }
