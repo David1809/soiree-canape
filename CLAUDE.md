@@ -9,6 +9,7 @@ Données en ligne : Supabase (projet `qsyrrcrknxdkdsxkoooa`). Langue de travail 
 - Commencer par `docs/ARCHITECTURE.md` (où se trouve quoi), puis seulement la fiche utile :
   `docs/JEUX.md` (règles des jeux), `docs/PUBLICATION.md` (nouvelle version, tests), `docs/SUPABASE.md` (base).
 - Garder les réponses courtes ; pas de recopie de code dans la conversation.
+- Toute nouvelle source de données (mots, questions, images, sons, bibliothèques) : noter source et licence dans `docs/SOURCES.md` avant de l'ajouter.
 
 ## Garde-fous
 - Compatibilité vieille télé : pas de syntaxe ES6+ dans `app.js`/`engine.js` (var, function, pas de flèches/let/const/template strings) ; `old.css` est généré par `tools/make_old_css.py`.
